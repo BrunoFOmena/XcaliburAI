@@ -38,6 +38,18 @@ xcalibur domains
 xcalibur plan echolas -i raw_data=./raw_data -i reference=./reference
 ```
 
+**4. Configure your LLM provider (optional; needed by the upcoming agents):**
+```bash
+pip install -e ".[anthropic]"
+export ANTHROPIC_API_KEY=...          # the key stays in the environment, never in a file
+xcalibur init                         # asks provider, model and the NAME of the key variable
+xcalibur check-llm                    # sends a tiny test message and reports the result
+```
+For scripts and CI: `xcalibur init --non-interactive --model claude-opus-5-5 --api-key-env ANTHROPIC_API_KEY`.
+The configuration is saved in `~/.config/xcalibur/xcalibur.yaml` (or `<workspace>/xcalibur.yaml` with `--workspace`).
+It is read from `--config PATH`, then `--workspace DIR`, then `./xcalibur.yaml` if present, then the user file.
+A workspace file cannot set `base_url` nor a key variable other than the standard one (a cloned repository could otherwise send your key elsewhere, or another secret as the key).
+
 **The goal** is to replace step 3 with a conversation:
 ```text
 > Run the pipeline on my samples against the M2904 reference, show the population
@@ -53,6 +65,8 @@ xcalibur version                         # print the version
 xcalibur domains                         # list installed domain packages
 xcalibur plan <domain> -p KEY=VALUE      # validate params and show the workflow command
                       -i NAME=PATH       #   (dry run; nothing is executed)
+xcalibur init [--non-interactive]        # configure the LLM provider (no secrets saved)
+xcalibur check-llm                       # test the configured provider
 ```
 Chat (`xcalibur chat`) and `xcalibur run` arrive with the agent layer.
 
