@@ -7,18 +7,15 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 ### Added
 - ECHOLAS pipeline imported into `xcalibur-echolas` (`main.nf`, 5 modules, scripts, `nextflow.config`) with its MIT notice. Input directories are now the `raw_data` and `reference` params.
 - `issue-link` check: every PR must close an open issue with a closing keyword (required on `main` and `homolog`).
+- Nextflow adapter executes runs for real: per-run directory `runs/<run_id>/`, log and HTML report, `run-<id>.json` provenance (engine version, container, return code), `-resume`, SIGINT/SIGTERM cancellation and a clear error when `nextflow` is missing (#5).
+- Versioning rules (`docs/VERSIONING.md`) and a test that enforces version consistency.
+- Issue template following the project standard, and the issue title-prefix convention in `CONTRIBUTING.md`.
 
 ### Changed
 - Promotion flow: `main` now receives a PR directly from `homolog`, merged with a merge commit; the `promote/*` branches and the cherry-pick `-x` requirement are gone. The `branch-policy` check enforces it (#26).
 - `run_id` is validated (`^[A-Za-z0-9_-]+$`) in `RunSpec`, `RunRecord` and `Workspace.run_dir`; invalid ids raise `ValueError` before touching the disk (#21).
 - Each attempt of a run keeps its own provenance record (`run-<id>.json`, then `run-<id>.attempt-<n>.json`, with an `attempt` field); the previous HTML report is removed only when a resume actually starts; Nextflow no longer inherits stdin; `inputs` records absolute paths (#21).
-- Promotion flow: tested commits reach `main` by `git cherry-pick -x` through a `promote/*` branch (previously `homolog` → `main`). The `branch-policy` check now enforces it (`.github/scripts/check-promotion.sh`).
 - Governance: the CTO (@BrunoFOmena) is the sole code owner; the CEO (@MCamposDA) needs the CTO's approval. README, CONTRIBUTING and CODEOWNERS updated.
-
-### Added
-- Nextflow adapter executes runs for real: per-run directory `runs/<run_id>/`, log and HTML report, `run-<id>.json` provenance (engine version, container, return code), `-resume`, SIGINT/SIGTERM cancellation and a clear error when `nextflow` is missing (#5).
-- Versioning rules (`docs/VERSIONING.md`) and a test that enforces version consistency.
-- Issue template following the project standard, and the issue title-prefix convention in `CONTRIBUTING.md`.
 
 ### Removed
 - Placeholder YAML issue forms, replaced by the standard issue template.
