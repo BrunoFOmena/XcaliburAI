@@ -149,7 +149,7 @@ work branch ──PR──▶ homolog ──(merge + test)──▶ cherry-pick 
 
 - `homolog` is the integration and testing branch. Every work branch opens its PR against `homolog`: approve → merge → test.
 - `main` is the stable, released line. It only receives PRs from `promote/*` branches made of **cherry-picks (`-x`) of commits already tested in `homolog`**; CI rejects anything else.
-- Pull requests are mandatory, need approval from the code owner, and must pass CI. Full flow in [CONTRIBUTING.md](CONTRIBUTING.md).
+- Pull requests are mandatory, must close an open issue (`Closes #N`), need approval from the code owner, and must pass CI. Full flow in [CONTRIBUTING.md](CONTRIBUTING.md).
 - Versions follow `MAJOR.MINOR.PATCH` ([Semantic Versioning](https://semver.org)); the project starts at **0.0.0**. Rules in [docs/VERSIONING.md](docs/VERSIONING.md), history in [CHANGELOG.md](CHANGELOG.md).
 
 <br/>
