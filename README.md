@@ -90,7 +90,7 @@ More detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The architecture pa
 
 ### ECHOLAS (current scope)
 
-*Evolutionary Comparison and Hierarchical Organization on Leishmania Analysis.* Adaptive QC and trimming → alignment → joint variant calling → filtering → PCA and maximum-likelihood phylogeny, plus diversity, Fst, and clade divergence. It originates from [MCamposDA/ECHOLAS](https://github.com/MCamposDA/ECHOLAS), authored by a cofounder.
+*Evolutionary Comparison and Hierarchical Organization on Leishmania Analysis.* Adaptive QC and trimming → alignment → joint variant calling → filtering → PCA and maximum-likelihood phylogeny, plus diversity, Fst, and clade divergence. It originates from [MCamposDA/ECHOLAS](https://github.com/MCamposDA/ECHOLAS), authored by a cofounder. The pipeline is included in [`packages/xcalibur-echolas`](packages/xcalibur-echolas) under its original MIT License ([notice](packages/xcalibur-echolas/src/xcalibur_echolas/workflow/NOTICE.md)).
 
 ### Expansion principles
 
@@ -136,7 +136,7 @@ Parameters are validated against the domain manifest (types, ranges, choices, un
 <details>
 <summary><b>How do I contribute?</b></summary>
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md). Pull requests always target `homolog`; tested commits reach `main` by cherry-pick through a `promote/*` branch.
+Read [CONTRIBUTING.md](CONTRIBUTING.md). Pull requests always target `homolog`; `main` receives a PR from `homolog`, merged with a merge commit.
 </details>
 
 <br/>
@@ -144,11 +144,11 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md). Pull requests always target `homolog`; 
 # 🌿 Branching & Versioning
 
 ```
-work branch ──PR──▶ homolog ──(merge + test)──▶ cherry-pick ──▶ promote/* ──PR──▶ main
+work branch ──PR──▶ homolog ──(merge + test)──▶ PR ──▶ main
 ```
 
 - `homolog` is the integration and testing branch. Every work branch opens its PR against `homolog`: approve → merge → test.
-- `main` is the stable, released line. It only receives PRs from `promote/*` branches made of **cherry-picks (`-x`) of commits already tested in `homolog`**; CI rejects anything else.
+- `main` is the stable, released line. It only receives PRs from `homolog`, merged with a merge commit; CI rejects anything else.
 - Pull requests are mandatory, must close an open issue (`Closes #N`), need approval from the code owner, and must pass CI. Full flow in [CONTRIBUTING.md](CONTRIBUTING.md).
 - Versions follow `MAJOR.MINOR.PATCH` ([Semantic Versioning](https://semver.org)); the project starts at **0.0.0**. Rules in [docs/VERSIONING.md](docs/VERSIONING.md), history in [CHANGELOG.md](CHANGELOG.md).
 

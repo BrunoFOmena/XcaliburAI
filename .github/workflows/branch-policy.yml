@@ -2,11 +2,10 @@ name: branch-policy
 
 # Enforces the branch model:
 #   work branch --PR--> homolog  (review, merge, test)
-#   homolog --cherry-pick -x--> promote/* --PR--> main
+#   homolog --PR (merge commit)--> main
 #
 #   - PRs into homolog: any branch except main and promote/*.
-#   - PRs into main: only from promote/* in this repository, and every commit must be
-#     a `git cherry-pick -x` of a commit that already exists in homolog.
+#   - PRs into main: only from the homolog branch of this repository.
 
 on:
   pull_request:
