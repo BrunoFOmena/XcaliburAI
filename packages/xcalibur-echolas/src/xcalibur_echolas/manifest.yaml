@@ -1,0 +1,43 @@
+schema_version: 1
+name: echolas
+display_name: ECHOLAS - Leishmania population genomics
+version: 0.0.0
+description: >
+  Short-read population genomics: adaptive QC and trimming, alignment, joint
+  variant calling, filtering, PCA and maximum-likelihood phylogeny.
+keywords:
+  [leishmania, population, genomics, variants, phylogeny, pca, fastq, vcf, snp, clade]
+
+workflow:
+  engine: nextflow
+  entrypoint: workflow/main.nf   # populated when the ECHOLAS pipeline is imported
+  container: null
+
+inputs:
+  - name: raw_data
+    kind: fastq
+    description: Gzip-compressed FASTQ files, paired (_1/_2 or _R1/_R2) or single-end.
+    pattern: "*.fastq.gz"
+    multiple: true
+  - name: reference
+    kind: fasta
+    description: Exactly one reference genome (.fna, .fa or .fasta).
+    pattern: "*.{fna,fa,fasta}"
+
+params:
+  - name: mode
+    type: string
+    default: AUTO
+    description: Trimming mode; AUTO selects conservative, intermediate or aggressive by read quality.
+
+outputs:
+  - name: joint_vcf
+    kind: vcf
+    pattern: "results/**/*.vcf.gz"
+    description: Filtered joint call set.
+  - name: pca
+    kind: pdf
+    pattern: "results/**/strain_pca.pdf"
+  - name: tree
+    kind: newick
+    pattern: "results/**/strain_tree.treefile"

@@ -1,88 +1,170 @@
-# XcaliburAI
+<div align="center">
+  <img alt="XcaliburAI Banner" src="docs/assets/banner.svg" width="760">
+</div>
 
-**Uma camada de agentes de IA sobre motores de workflow para genômica.**
+<br/>
 
-Em vez de montar e rodar pipelines na mão, o usuário conversa. O sistema escolhe, configura, executa e interpreta o pipeline adequado e entrega resultados e um relatório reprodutível.
+<div align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-cc2c18?style=for-the-badge" alt="License"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.0.0-e84d3a?style=for-the-badge" alt="Version"></a>
+  <img src="https://img.shields.io/badge/status-pre--alpha-050505?style=for-the-badge&labelColor=cc2c18" alt="Status">
+  <img src="https://img.shields.io/badge/python-3.11%2B-050505?style=for-the-badge&labelColor=e45c47" alt="Python">
+  <a href="https://github.com/BrunoFOmena/XcaliburAI/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/BrunoFOmena/XcaliburAI/ci.yml?branch=main&style=for-the-badge&label=CI&labelColor=cc2c18&color=050505" alt="CI"></a>
+</div>
 
-> Status: fase de concepção. Ainda não há código; este README registra a visão e o escopo inicial.
+<br/>
 
 ---
 
-## Visão
+> **Status: pre-alpha (v0.0.0).** The core skeleton and the ECHOLAS domain contract exist; the pipeline itself and the LLM-driven agents are still being built. Nothing here is ready for production analysis.
 
-Pipelines de genômica são reprodutíveis e robustos, mas exigem conhecimento técnico para escolher ferramentas, ajustar parâmetros e interpretar saídas. XcaliburAI coloca agentes de IA entre o usuário e o motor de workflow (Nextflow):
+# Quickstart
+
+**1. Install (development):**
+```bash
+git clone https://github.com/BrunoFOmena/XcaliburAI.git && cd XcaliburAI
+python -m venv .venv && source .venv/bin/activate
+pip install -e . -e packages/xcalibur-echolas
+```
+
+**2. See what is installed:**
+```bash
+xcalibur version
+xcalibur domains
+```
+
+**3. Plan a run (validates parameters, prints the workflow command, executes nothing):**
+```bash
+xcalibur plan echolas -i raw_data=./raw_data -i reference=./reference
+```
+
+**The goal** is to replace step 3 with a conversation:
+```text
+> Run the pipeline on my samples against the M2904 reference, show the population
+  structure, and tell me which clade my new sample belongs to.
+```
+
+<br/>
+
+# CLI Reference
+
+```bash
+xcalibur version                         # print the version
+xcalibur domains                         # list installed domain packages
+xcalibur plan <domain> -p KEY=VALUE      # validate params and show the workflow command
+                      -i NAME=PATH       #   (dry run; nothing is executed)
+```
+Chat (`xcalibur chat`) and `xcalibur run` arrive with the agent layer.
+
+<br/>
+
+# 🧠 Architecture
+
+XcaliburAI is a multi-agent system built as a **small core plus domain packages**. The core knows nothing about any specific domain; a domain is a package that plugs in through a Python entry point.
+
+* **Supervisor:** routes each message to the right domain and agent.
+* **Domain registry:** discovers installed packages through the `xcalibur.domains` entry point.
+* **Manifest validator:** every domain declares its inputs, parameters, ranges, and safe defaults. Requests are validated *before* anything runs, so an agent cannot silently pass bad parameters.
+* **Execution layer:** one adapter per workflow engine (Nextflow first). Agents ask to "run this package with these parameters"; they never build shell commands.
+* **Provenance:** versions, parameters, and the exact command are recorded for every run.
+* **Local-first:** data stays in the workspace on your machine. You bring your own LLM provider; keys are read from environment variables and never stored.
+
+<div align="center">
+  <img alt="Core Architecture" src="docs/assets/architecture-core.svg" width="88%">
+</div>
+
+<br/>
+
+More detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The architecture pattern is inspired by [Lobster AI](https://github.com/the-omics-os/lobster); XcaliburAI is an independent implementation and **shares no code** with it.
+
+<br/>
+
+# 🧬 Domains
+
+| Order | Domain | Scope | Status |
+|---|---|---|---|
+| 1 | **ECHOLAS** | *Leishmania* population genomics from short reads | 🔴 in progress |
+| 2 | Human & clinical variants | WGS/WES, annotation, prioritization | ⚪ proposed |
+| 3 | Bulk RNA-seq | Quantification, differential expression, enrichment | ⚪ proposed |
+| 4 | Metagenomics & microbiome | Taxonomic and functional profiling | ⚪ proposed |
+
+### ECHOLAS (current scope)
+
+*Evolutionary Comparison and Hierarchical Organization on Leishmania Analysis.* Adaptive QC and trimming → alignment → joint variant calling → filtering → PCA and maximum-likelihood phylogeny, plus diversity, Fst, and clade divergence. It originates from [MCamposDA/ECHOLAS](https://github.com/MCamposDA/ECHOLAS), authored by a cofounder.
+
+### Expansion principles
+
+- **Depth before breadth:** a new domain starts only when the previous one is solid.
+- **Own implementation first.** [nf-core](https://nf-co.re) pipelines may serve as a starting point for future domains through a generic adapter, but our preference is implementing pipelines and agents ourselves.
+- Adding a domain means adding a package. The core does not change. See [docs/DOMAIN_PACKAGES.md](docs/DOMAIN_PACKAGES.md).
+
+<br/>
+
+# 🛠️ Build Your Own Domain
+
+A domain package is a small Python package with a `manifest.yaml`, its workflow, and its agents, registered like this:
+
+```toml
+[project.entry-points."xcalibur.domains"]
+echolas = "xcalibur_echolas:plugin"
+```
+
+[`packages/xcalibur-echolas`](packages/xcalibur-echolas) is the reference example.
+
+<br/>
+
+# FAQ
+
+<details>
+<summary><b>Why agents over workflow engines instead of agents that call libraries?</b></summary>
+
+Genomics pipelines are heavy, containerized, and need to be reproducible. Putting the agent *in front of* a workflow engine keeps the rigor of the pipeline while removing the expertise barrier of configuring and interpreting it.
+</details>
+
+<details>
+<summary><b>Which LLMs can I use?</b></summary>
+
+The core defines a provider-agnostic interface ([`xcalibur/llm`](src/xcalibur/llm/base.py)). Concrete providers arrive with the agent layer.
+</details>
+
+<details>
+<summary><b>Can the agent break my data or invent parameters?</b></summary>
+
+Parameters are validated against the domain manifest (types, ranges, choices, unknown keys rejected) before execution, and every run writes a provenance record. Treat results as plausible-but-verify until the project leaves pre-alpha.
+</details>
+
+<details>
+<summary><b>How do I contribute?</b></summary>
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md). Pull requests always target `homolog`; only `homolog` is promoted to `main`.
+</details>
+
+<br/>
+
+# 🌿 Branching & Versioning
 
 ```
-usuário  ──conversa──▶  supervisor  ──▶  agentes de domínio  ──▶  motor de workflow  ──▶  resultados
-                                              ▲                                              │
-                                              └──────────── interpretação e relatório ◀──────┘
+feature/*  ──PR──▶  homolog  ──PR──▶  main
 ```
 
-Exemplo de uso pretendido:
+- `main` is the stable, released line. It only receives pull requests from `homolog`.
+- `homolog` is the integration and testing branch. Every other branch opens its PR against `homolog`.
+- Pull requests are mandatory, require one approving review, and must pass CI.
+- Versions follow [Semantic Versioning](https://semver.org); the project starts at **0.0.0**. See [CHANGELOG.md](CHANGELOG.md).
 
-> "Rode o pipeline nas minhas amostras contra a referência M2904, mostre a estrutura populacional e diga a qual clado pertence a amostra nova."
+<br/>
 
-## Arquitetura
+# 👥 Cofounders
 
-O desenho segue o padrão de sistemas multiagente com plugins, adotado por projetos como o [Lobster AI](https://github.com/the-omics-os/lobster). Adotamos a **ideia** da arquitetura, mas **todo o código é de implementação própria**; não copiamos código de terceiros.
-
-- **Núcleo:** supervisor multiagente, registro de agentes por plugin, configuração de LLM (o usuário traz o próprio provedor), workspace e proveniência.
-- **Pacote de domínio:** cada domínio é um pacote independente com quatro partes:
-  1. um ou mais agentes;
-  2. os módulos do workflow (Nextflow);
-  3. o ambiente de container;
-  4. um **manifesto** descrevendo entradas, saídas, parâmetros, validações e valores padrão seguros.
-- **Camada de execução:** um adaptador único para o motor de workflow (Docker local, HPC e nuvem). O agente só pede "rodar este pacote com estes parâmetros".
-- **Camada de interpretação:** agentes que leem as saídas (VCF, árvores, tabelas) e geram figuras e relatórios.
-- **Aquisição de dados:** agente comum para bancos públicos (SRA, ENA, NCBI) e literatura.
-- **Proveniência:** tudo que foi usado em uma execução (versões, parâmetros, referência) é registrado e exportável.
-
-Adicionar um domínio é adicionar um pacote, sem alterar o núcleo. Isso também permite contribuições de terceiros.
-
-## Escopo inicial: domínio ECHOLAS
-
-O primeiro e, por ora, único domínio é o do **ECHOLAS** (*Evolutionary Comparison and Hierarchical Organization on Leishmania Analysis*): genômica populacional a partir de leituras curtas.
-
-Etapas cobertas pelo pacote:
-
-1. **QC e trimming adaptativo** das leituras;
-2. **Alinhamento e chamada de variantes** contra um genoma de referência;
-3. **Genotipagem conjunta** entre amostras;
-4. **Filtragem** de SNPs e INDELs;
-5. **PCA e filogenia** de máxima verossimilhança, além de análises de diversidade, Fst e divergência de clados.
-
-O ECHOLAS é a origem do pipeline e pertence ao cofounder [@MCamposDA](https://github.com/MCamposDA); o repositório original é [MCamposDA/ECHOLAS](https://github.com/MCamposDA/ECHOLAS).
-
-## Proposta de expansão de domínios
-
-Depois que o domínio ECHOLAS estiver sólido, a ideia é crescer por **novos pacotes**, nesta ordem sugerida (sujeita a revisão):
-
-| Ordem | Domínio | Escopo |
-|---|---|---|
-| 1 | Genômica populacional e de patógenos | **ECHOLAS (escopo atual)** |
-| 2 | Variantes humanas e clínicas | WGS/WES, anotação e priorização de variantes |
-| 3 | RNA-seq bulk | Quantificação, expressão diferencial, enriquecimento |
-| 4 | Metagenômica e microbioma | Perfilamento taxonômico e funcional |
-
-**Fonte de pipelines:** o [nf-core](https://nf-co.re) (catálogo aberto de pipelines Nextflow revisados pela comunidade) pode servir como **base inicial** para domínios futuros, por meio de um adaptador genérico. A preferência do projeto, porém, é a **implementação própria** dos pipelines e agentes; o nf-core entra como ponto de partida, não como destino.
-
-**Princípio de crescimento:** poucos domínios, bem feitos. Largura só entra depois de profundidade, para evitar um produto raso.
-
-## Riscos reconhecidos
-
-- **Dispersão:** ampliar domínios cedo demais dilui a qualidade. Por isso o escopo inicial é um único domínio.
-- **Custo de computação:** pipelines como o do ECHOLAS (GATK, joint genotyping) pedem máquinas fortes; a execução precisa suportar Docker local, HPC e nuvem.
-- **Erro silencioso:** o agente pode escolher parâmetros inadequados e o resultado parecer plausível. O manifesto de cada pacote deve trazer validações e valores padrão seguros, e todo relatório deve registrar o que foi usado.
-
-## Cofounders
-
-XcaliburAI é co-fundado por dois cofounders, com o mesmo nível de gerência e autoridade de decisão:
+XcaliburAI is co-founded by two cofounders with the same management level and decision authority.
 
 | Cofounder | GitHub |
-|-----------|--------|
+|---|---|
 | Bruno F. Omena | [@BrunoFOmena](https://github.com/BrunoFOmena) |
 | MCamposDA | [@MCamposDA](https://github.com/MCamposDA) |
 
-## Licença
+<br/>
 
-A definir.
+# 📄 License
+
+[GNU Affero General Public License v3.0 or later](LICENSE). The core and official domain packages are open source. If you run a modified version as a network service, the AGPL requires you to offer its source to your users.

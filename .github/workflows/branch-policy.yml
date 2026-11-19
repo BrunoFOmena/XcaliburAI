@@ -1,0 +1,38 @@
+name: branch-policy
+
+# Enforces the branch model:  <any branch> -> homolog -> main
+#   - PRs into main must come from homolog (in this repository).
+#   - PRs from main are never allowed (no backward promotion).
+
+on:
+  pull_request:
+    branches: [main, homolog]
+    types: [opened, reopened, synchronize, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  branch-policy:
+    name: branch-policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check source and target branches
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+        run: |
+          echo "PR: $HEAD ($HEAD_REPO) -> $BASE"
+          if [ "$BASE" = "main" ]; then
+            if [ "$HEAD" != "homolog" ] || [ "$HEAD_REPO" != "$THIS_REPO" ]; then
+              echo "::error::Pull requests into 'main' must come from 'homolog'. Retarget this PR to 'homolog'."
+              exit 1
+            fi
+          fi
+          if [ "$BASE" = "homolog" ] && [ "$HEAD" = "main" ]; then
+            echo "::error::'main' must never be merged back into 'homolog' via PR."
+            exit 1
+          fi
+          echo "Branch policy OK"
