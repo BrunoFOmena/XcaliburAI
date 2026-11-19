@@ -23,6 +23,11 @@ class RunRecord(BaseModel):
     params: dict[str, Any]
     inputs: dict[str, str] = Field(default_factory=dict)
     status: str = "planned"
+    returncode: int | None = None
+    engine_version: str | None = None
+    container: str | None = None
+    resumed: bool = False
+    finished_at: datetime | None = None
 
     def write(self, directory: Path) -> Path:
         directory.mkdir(parents=True, exist_ok=True)
