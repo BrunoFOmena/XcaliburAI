@@ -48,6 +48,8 @@ addopts = "-q"
 line-length = 100
 target-version = "py311"
 src = ["src", "packages/xcalibur-echolas/src", "tests"]
+# Imported third-party pipeline code is kept as published (see its NOTICE.md).
+extend-exclude = ["packages/*/src/*/workflow"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

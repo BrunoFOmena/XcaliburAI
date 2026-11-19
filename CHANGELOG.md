@@ -5,6 +5,7 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 ## [Unreleased]
 
 ### Added
+- ECHOLAS pipeline imported into `xcalibur-echolas` (`main.nf`, 5 modules, scripts, `nextflow.config`) with its MIT notice. Input directories are now the `raw_data` and `reference` params.
 - `issue-link` check: every PR must close an open issue with a closing keyword (required on `main` and `homolog`).
 
 ### Changed
