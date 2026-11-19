@@ -23,5 +23,4 @@ Closes #
 - [ ] Lists `Closes #N` for every issue carried by the promoted commits
 - [ ] Head is `homolog` and it will be merged with a merge commit (not squash)
 - [ ] Everything currently in `homolog` was tested and approved
-- [ ] The change was tested in `homolog` and that result was approved
-- [ ] Version and CHANGELOG are updated if this is a release
+- [ ] Version and CHANGELOG are updated (releases only; otherwise N/A)

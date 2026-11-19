@@ -23,8 +23,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Fetch homolog
-        run: git fetch origin homolog:refs/remotes/origin/homolog
       - name: Check source and target branches
         env:
           BASE: ${{ github.base_ref }}
