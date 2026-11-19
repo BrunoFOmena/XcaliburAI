@@ -13,10 +13,12 @@ work branch ──PR──▶ homolog ──(merge + test)──▶ PR ──▶
 
 ### Flow, step by step
 
-1. **PR to `homolog`.** Cut a work branch from `homolog` and open the PR against `homolog`. Get it **approved**, then **merge**. Prefer *squash merge* so each PR becomes one commit and `homolog` stays linear.
+1. **PR to `homolog`.** Cut a work branch from `homolog` and open the PR against `homolog`. Get it **approved**, then **merge with a merge commit**.
 2. **Test on `homolog`.** The change is tested there (CI plus manual checks). Only when the test result is **approved** may it go to `main`.
 3. **PR to `main`.** Open a PR from `homolog` into `main` (`gh pr create --base main --head homolog`). It carries **everything** that is in `homolog`, so confirm beforehand that all of it was tested and approved, and list `Closes #N` for every issue it carries.
-4. **Merge with a merge commit.** After approval, merge using a *merge commit* (never squash or rebase), so `main` and `homolog` keep a shared history and the next promotion has no conflicts.
+4. **Merge with a merge commit.** After approval, merge using a *merge commit*, so `main` and `homolog` keep a shared history and the next promotion has no conflicts.
+
+**Every PR is merged with a merge commit** (work PRs into `homolog` and promotion PRs into `main`). Never use *squash* or *rebase* merge.
 
 ### Rules enforced by CI (`branch-policy`)
 

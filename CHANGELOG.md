@@ -12,6 +12,7 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 - Issue template following the project standard, and the issue title-prefix convention in `CONTRIBUTING.md`.
 
 ### Changed
+- Every PR (work and promotion) is merged with a merge commit; squash and rebase merges are no longer used (#35).
 - Promotion flow: `main` now receives a PR directly from `homolog`, merged with a merge commit; the `promote/*` branches and the cherry-pick `-x` requirement are gone. The `branch-policy` check enforces it (#26).
 - `run_id` is validated (`^[A-Za-z0-9_-]+$`) in `RunSpec`, `RunRecord` and `Workspace.run_dir`; invalid ids raise `ValueError` before touching the disk (#21).
 - Each attempt of a run keeps its own provenance record (`run-<id>.json`, then `run-<id>.attempt-<n>.json`, with an `attempt` field); the previous HTML report is removed only when a resume actually starts; Nextflow no longer inherits stdin; `inputs` records absolute paths (#21).
