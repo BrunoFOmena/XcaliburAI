@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from xcalibur.config import (
+    check_workspace_settings,
     load_llm_config,
     locate_config,
     save_llm_config,
@@ -101,13 +102,6 @@ def _cmd_init(args: argparse.Namespace) -> int:
     except LLMConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    if args.base_url and args.config is None and args.workspace is not None:
-        print(
-            "error: --base-url is not allowed in a workspace configuration (it would send "
-            "your API key to that server); use the user configuration or --config",
-            file=sys.stderr,
-        )
-        return 2
 
     if args.config is not None:
         path = args.config
@@ -127,6 +121,12 @@ def _cmd_init(args: argparse.Namespace) -> int:
         base_url=args.base_url,
         effort=args.effort,
     )
+    if args.config is None and args.workspace is not None:
+        try:
+            check_workspace_settings(config, "--workspace")
+        except LLMConfigError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
     try:
         save_llm_config(config, path)
     except LLMConfigError as exc:

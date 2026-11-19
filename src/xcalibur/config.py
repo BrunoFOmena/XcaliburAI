@@ -6,12 +6,14 @@ Where the configuration is read from, in order:
 3. ``./xcalibur.yaml`` in the current directory, if present (workspace file, untrusted);
 4. the user configuration, ``$XDG_CONFIG_HOME/xcalibur/xcalibur.yaml`` (trusted).
 
-A workspace file may come from a cloned repository, so it may not set ``base_url``:
-that would send the API key to another server.
+A workspace file may come from a cloned repository, so it may not set ``base_url`` (that
+would send the API key to another server) nor point ``api_key_env`` at a variable other than
+the provider's standard one (that would send another secret as the key).
 """
 
 from __future__ import annotations
 
+import math
 import os
 import re
 from dataclasses import MISSING, asdict, dataclass, fields
@@ -20,6 +22,7 @@ from typing import Any
 
 import yaml
 
+from xcalibur.llm import DEFAULT_KEY_ENVS
 from xcalibur.llm.base import ProviderConfig
 from xcalibur.llm.errors import LLMConfigError
 
@@ -90,8 +93,9 @@ def save_llm_config(config: ProviderConfig, path: Path) -> Path:
 
 
 def load_llm_config(location: ConfigLocation | Path) -> ProviderConfig:
+    """Load and validate; a bare Path is treated as an untrusted (workspace) file."""
     if isinstance(location, Path):
-        location = ConfigLocation(location, trusted=True)
+        location = ConfigLocation(location, trusted=False)
     path = location.path
     if not path.exists():
         raise LLMConfigError(f"No configuration at {path}; run 'xcalibur init'.")
@@ -99,6 +103,8 @@ def load_llm_config(location: ConfigLocation | Path) -> ProviderConfig:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except OSError as exc:
         raise LLMConfigError(f"Could not read {path}: {exc.strerror or exc}.") from None
+    except UnicodeDecodeError:
+        raise LLMConfigError(f"{path} is not a UTF-8 text file.") from None
     except yaml.YAMLError as exc:
         raise LLMConfigError(f"{path} is not valid YAML: {exc}.") from None
     llm = data.get("llm") if isinstance(data, dict) else None
@@ -108,16 +114,32 @@ def load_llm_config(location: ConfigLocation | Path) -> ProviderConfig:
     config = ProviderConfig(**llm)
     if config.api_key_env:
         validate_env_name(config.api_key_env)
-    if config.base_url and not location.trusted:
-        raise LLMConfigError(
-            f"{path} sets base_url, which is not allowed in a workspace configuration "
-            "(it would send your API key to that server). Set it in your user configuration "
-            "or pass the file explicitly with --config."
-        )
+    if not location.trusted:
+        check_workspace_settings(config, str(path))
     return config
 
 
+def check_workspace_settings(config: ProviderConfig, where: str) -> None:
+    """Settings a workspace file (possibly from someone else) may not change."""
+    if config.base_url:
+        raise LLMConfigError(
+            f"{where} sets base_url, which is not allowed in a workspace configuration "
+            "(it would send your API key to that server). Set it in your user configuration "
+            "or pass the file explicitly with --config."
+        )
+    standard = DEFAULT_KEY_ENVS.get(config.provider)
+    if config.api_key_env and config.api_key_env != standard:
+        raise LLMConfigError(
+            f"{where} sets api_key_env to {config.api_key_env}, but a workspace configuration "
+            f"may only use {standard} (another variable could hold a different secret). "
+            "Set it in your user configuration or pass the file explicitly with --config."
+        )
+
+
 def _check_settings(llm: dict[str, Any], path: Path) -> None:
+    odd = [key for key in llm if not isinstance(key, str)]
+    if odd:
+        raise LLMConfigError(f"{path}: setting names must be text, got {odd[0]!r}.")
     unknown = sorted(set(llm) - set(_TYPES))
     if unknown:
         raise LLMConfigError(f"{path}: unknown llm settings {', '.join(unknown)}.")
@@ -132,6 +154,8 @@ def _check_settings(llm: dict[str, Any], path: Path) -> None:
         if not ok:
             kinds = " or ".join("null" if t is type(None) else t.__name__ for t in expected)
             raise LLMConfigError(f"{path}: '{name}' must be {kinds}, got {value!r}.")
+    if "timeout" in llm and not math.isfinite(llm["timeout"]):
+        raise LLMConfigError(f"{path}: 'timeout' must be a finite number.")
     for name in ("max_tokens", "timeout"):
         if name in llm and llm[name] <= 0:
             raise LLMConfigError(f"{path}: '{name}' must be greater than zero.")

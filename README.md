@@ -48,7 +48,7 @@ xcalibur check-llm                    # sends a tiny test message and reports th
 For scripts and CI: `xcalibur init --non-interactive --model claude-opus-5-5 --api-key-env ANTHROPIC_API_KEY`.
 The configuration is saved in `~/.config/xcalibur/xcalibur.yaml` (or `<workspace>/xcalibur.yaml` with `--workspace`).
 It is read from `--config PATH`, then `--workspace DIR`, then `./xcalibur.yaml` if present, then the user file.
-A workspace file cannot set `base_url` (a cloned repository could otherwise send your key elsewhere).
+A workspace file cannot set `base_url` nor a key variable other than the standard one (a cloned repository could otherwise send your key elsewhere, or another secret as the key).
 
 **The goal** is to replace step 3 with a conversation:
 ```text
