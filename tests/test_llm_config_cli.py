@@ -1,0 +1,102 @@
+"""`xcalibur init` / `check-llm` and the secret-free configuration file."""
+
+import pytest
+import yaml
+
+from xcalibur import cli
+from xcalibur.config import load_llm_config, save_llm_config
+from xcalibur.llm.base import ProviderConfig
+from xcalibur.llm.errors import LLMAuthError, LLMConfigError
+
+SECRET = "sk-ant-test-SECRET-456"
+
+
+def init(tmp_path, *extra):
+    return cli.main(["init", "--non-interactive", "--workspace", str(tmp_path), *extra])
+
+
+def test_init_non_interactive_saves_only_the_variable_name(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", SECRET)
+    assert init(tmp_path, "--model", "claude-opus-5-5") == 0
+    text = (tmp_path / "xcalibur.yaml").read_text()
+    assert SECRET not in text and SECRET not in capsys.readouterr().out
+    llm = yaml.safe_load(text)["llm"]
+    assert llm["provider"] == "anthropic" and llm["model"] == "claude-opus-5-5"
+    assert llm["api_key_env"] == "ANTHROPIC_API_KEY"
+
+
+def test_init_rejects_a_pasted_key(tmp_path, capsys):
+    assert init(tmp_path, "--api-key-env", SECRET) == 2
+    assert "NAME of an environment variable" in capsys.readouterr().err
+    assert not (tmp_path / "xcalibur.yaml").exists()
+
+
+def test_init_does_not_overwrite_without_force(tmp_path):
+    assert init(tmp_path) == 0
+    assert init(tmp_path, "--model", "other") == 2
+    assert init(tmp_path, "--model", "other", "--force") == 0
+    assert load_llm_config(tmp_path / "xcalibur.yaml").model == "other"
+
+
+def test_init_interactive_uses_answers_and_defaults(tmp_path, monkeypatch):
+    answers = iter(["", "claude-sonnet-5-5", "MY_KEY"])
+    monkeypatch.setattr("builtins.input", lambda prompt: next(answers))
+    assert cli.main(["init", "--workspace", str(tmp_path)]) == 0
+    config = load_llm_config(tmp_path / "xcalibur.yaml")
+    assert (config.provider, config.model, config.api_key_env) == (
+        "anthropic",
+        "claude-sonnet-5-5",
+        "MY_KEY",
+    )
+
+
+def test_init_defaults_to_the_user_config_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    assert cli.main(["init", "--non-interactive"]) == 0
+    assert (tmp_path / "cfg" / "xcalibur" / "xcalibur.yaml").exists()
+
+
+def test_check_llm_without_key_names_the_variable_without_traceback(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("XCAL_MISSING", raising=False)
+    assert init(tmp_path, "--api-key-env", "XCAL_MISSING") == 0
+    assert cli.main(["check-llm", "--workspace", str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "XCAL_MISSING is not set" in err and "Traceback" not in err
+
+
+def test_check_llm_reports_success_and_auth_failure(tmp_path, monkeypatch, capsys):
+    assert init(tmp_path) == 0
+
+    class Fake:
+        def __init__(self, exc=None):
+            self.exc = exc
+
+        def complete(self, messages):
+            if self.exc:
+                raise self.exc
+            return "OK"
+
+    monkeypatch.setattr(cli, "create_provider", lambda config: Fake())
+    assert cli.main(["check-llm", "--workspace", str(tmp_path)]) == 0
+    assert "answered" in capsys.readouterr().out
+
+    monkeypatch.setattr(cli, "create_provider", lambda c: Fake(LLMAuthError("rejected")))
+    assert cli.main(["check-llm", "--workspace", str(tmp_path)]) == 3
+
+
+def test_check_llm_without_configuration(tmp_path, capsys):
+    assert cli.main(["check-llm", "--config", str(tmp_path / "none.yaml")]) == 2
+    assert "xcalibur init" in capsys.readouterr().err
+
+
+def test_config_round_trip_and_validation(tmp_path):
+    path = tmp_path / "c.yaml"
+    config = ProviderConfig(provider="anthropic", model="m", api_key_env="KEY_ENV", effort="low")
+    assert load_llm_config(save_llm_config(config, path)) == config
+
+    path.write_text("llm:\n  provider: anthropic\n  model: m\n  api_key: x\n")
+    with pytest.raises(LLMConfigError, match="unknown llm settings api_key"):
+        load_llm_config(path)
+
+    with pytest.raises(LLMConfigError, match="NAME"):
+        save_llm_config(ProviderConfig(provider="anthropic", model="m", api_key_env=SECRET), path)
