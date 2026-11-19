@@ -1,5 +1,6 @@
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -15,7 +16,9 @@ from xcalibur.registry import DomainPlugin
 from xcalibur.workspace import Workspace
 
 FAKE = """#!/bin/sh
-if [ "$1" = "-version" ]; then echo "nextflow version 24.04.0"; exit 0; fi
+if [ "$1" = "-version" ]; then
+  printf "      N E X T F L O W\\n      version 24.04.0 build 5917\\n"; exit 0
+fi
 echo "args: $@"
 case "$*" in *--fail*) echo "boom" >&2; exit 3;; esac
 case "$*" in *--hang*) sleep 30;; esac
@@ -60,7 +63,7 @@ def test_success_creates_run_dir_log_and_record(tmp_path):
     record = json.loads(result.record_path.read_text())
     assert record["status"] == "succeeded"
     assert record["run_id"] == s.run_id
-    assert record["engine_version"] == "nextflow version 24.04.0"
+    assert record["engine_version"] == "version 24.04.0 build 5917"
     assert record["container"] == "img:1"
     assert record["params"] == {"mode": "AUTO"}
     assert record["command"][1] == "run"
@@ -97,8 +100,48 @@ def test_command_is_a_list_with_no_shell_interpretation(tmp_path):
     assert "a; rm -rf /" in cmd and isinstance(cmd, list)
 
 
+def test_execution_requires_workspace():
+    s = RunSpec(plugin=make_plugin(), params={}, dry_run=False)
+    with pytest.raises(ValueError, match="workspace is required"):
+        NextflowEngine("nextflow").run(s)
+
+
+def test_relative_paths_become_absolute(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    s = RunSpec(
+        plugin=make_plugin(),
+        params={},
+        inputs={"reads": Path("data/r.fq")},
+        workspace=Workspace(Path("ws")),
+    )
+    cmd = NextflowEngine().build_command(s)
+    assert cmd[cmd.index("--reads") + 1] == str(tmp_path / "data" / "r.fq")
+    assert Path(cmd[cmd.index("-with-report") + 1]).is_absolute()
+
+
+def test_option_like_value_is_rejected_but_negative_numbers_pass(tmp_path):
+    engine = NextflowEngine()
+    with pytest.raises(ValueError, match="engine option"):
+        engine.build_command(spec(tmp_path, params={"x": "-with-docker"}))
+    assert "-1" in engine.build_command(spec(tmp_path, params={"x": -1}))
+
+
+def test_resume_reuses_run_dir_appends_log_and_replaces_report(tmp_path):
+    engine = NextflowEngine(fake_nextflow(tmp_path))
+    first = spec(tmp_path)
+    r1 = engine.run(first)
+    report = r1.run_dir / "nextflow_report.html"
+    report.write_text("old")
+    r2 = engine.run(spec(tmp_path, run_id=first.run_id, resume=True))
+    assert r2.run_dir == r1.run_dir and r2.status == "succeeded"
+    assert r2.log_path.read_text().count("args: run") == 2
+    assert not report.exists()
+    assert json.loads(r2.record_path.read_text())["resumed"] is True
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="posix signals")
-def test_sigint_cancels_run(tmp_path):
+@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM])
+def test_signal_cancels_run(tmp_path, sig):
     script = f"""
 import sys
 sys.path.insert(0, {str(Path(__file__).parent.parent / "src")!r})
@@ -121,7 +164,7 @@ print(NextflowEngine({fake_nextflow(tmp_path)!r}).run(s).status, flush=True)
     while time.time() < deadline and not list((tmp_path / "ws" / "runs").glob("*/nextflow.log")):
         time.sleep(0.1)
     time.sleep(0.5)
-    os.kill(proc.pid, 2)
+    os.kill(proc.pid, sig)
     out, _ = proc.communicate(timeout=20)
     assert out.strip() == "cancelled"
     record = next((tmp_path / "ws" / "runs").glob("*/run-*.json"))

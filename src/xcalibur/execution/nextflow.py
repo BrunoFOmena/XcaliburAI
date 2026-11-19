@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
+import os
 import shutil
+import signal
 import subprocess
+import threading
 from datetime import UTC, datetime
+from pathlib import Path
 
 from xcalibur.execution.base import EngineNotFoundError, RunResult, RunSpec
 from xcalibur.provenance import RunRecord
@@ -22,7 +27,7 @@ class NextflowEngine:
     def build_command(self, spec: RunSpec) -> list[str]:
         """Build the argument list (never a shell string) from validated parts."""
         workflow = spec.plugin.manifest.workflow
-        cmd = [self.executable, "run", str(spec.plugin.workflow_path)]
+        cmd = [self.executable, "run", str(spec.plugin.workflow_path.absolute())]
         if workflow.profile:
             cmd += ["-profile", workflow.profile]
         if spec.resume:
@@ -30,8 +35,9 @@ class NextflowEngine:
         for key in sorted(spec.params):
             cmd += [f"--{key}", _render(spec.params[key])]
         for key in sorted(spec.inputs):
-            cmd += [f"--{key}", str(spec.inputs[key])]
-        cmd += ["-with-report", str(spec.run_dir / "nextflow_report.html")]
+            # The subprocess runs inside the run directory, so paths must be absolute.
+            cmd += [f"--{key}", str(spec.inputs[key].absolute())]
+        cmd += ["-with-report", str(_report_path(spec))]
         return cmd
 
     def version(self) -> str | None:
@@ -46,8 +52,9 @@ class NextflowEngine:
             )
         except (OSError, subprocess.SubprocessError):
             return None
+        # Real Nextflow prints an ASCII banner ("N E X T F L O W") before the version line.
         for line in proc.stdout.splitlines():
-            if line.strip():
+            if "version" in line.lower():
                 return line.strip()
         return None
 
@@ -55,6 +62,8 @@ class NextflowEngine:
         command = self.build_command(spec)
         if spec.dry_run:
             return RunResult(run_id=spec.run_id, status="planned", command=command)
+        if spec.workspace is None:
+            raise ValueError("A workspace is required to execute a run (dry_run=False).")
 
         if shutil.which(self.executable) is None:
             raise EngineNotFoundError(
@@ -63,8 +72,10 @@ class NextflowEngine:
                 "PATH, or pass the full path to the executable."
             )
 
-        run_dir = spec.run_dir
+        run_dir = spec.run_dir.absolute()
         run_dir.mkdir(parents=True, exist_ok=True)
+        # Nextflow refuses to overwrite an existing report; on resume it is regenerated.
+        _report_path(spec).unlink(missing_ok=True)
         log_path = run_dir / "nextflow.log"
         manifest = spec.plugin.manifest
         record = RunRecord(
@@ -85,18 +96,23 @@ class NextflowEngine:
         with log_path.open("a" if spec.resume else "w", encoding="utf-8") as log:
             try:
                 proc = subprocess.Popen(  # noqa: S603 - built from manifest + validated params
-                    command, cwd=run_dir, stdout=log, stderr=subprocess.STDOUT
+                    command,
+                    cwd=run_dir,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,  # own process group, so children can be stopped too
                 )
             except OSError as exc:
                 log.write(f"xcalibur: could not start Nextflow: {exc}\n")
             else:
-                try:
-                    returncode = proc.wait()
-                    status = "succeeded" if returncode == 0 else "failed"
-                except KeyboardInterrupt:
-                    returncode = _terminate(proc)
-                    status = "cancelled"
-                    log.write("xcalibur: run cancelled by user (SIGINT)\n")
+                with _sigterm_as_interrupt():
+                    try:
+                        returncode = proc.wait()
+                        status = "succeeded" if returncode == 0 else "failed"
+                    except KeyboardInterrupt:
+                        returncode = _terminate(proc)
+                        status = "cancelled"
+                        log.write("xcalibur: run cancelled (SIGINT/SIGTERM)\n")
 
         record.status = status
         record.returncode = returncode
@@ -113,16 +129,55 @@ class NextflowEngine:
         )
 
 
+def _report_path(spec: RunSpec) -> Path:
+    return spec.run_dir.absolute() / "nextflow_report.html"
+
+
+def _signal_group(proc: subprocess.Popen[bytes], sig: int) -> None:
+    try:
+        os.killpg(proc.pid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
 def _terminate(proc: subprocess.Popen[bytes]) -> int:
-    proc.terminate()
+    _signal_group(proc, signal.SIGTERM)
     try:
         return proc.wait(timeout=_CANCEL_GRACE)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        _signal_group(proc, signal.SIGKILL)
         return proc.wait()
+
+
+@contextlib.contextmanager
+def _sigterm_as_interrupt():
+    """Treat SIGTERM like Ctrl+C while a run is in flight (main thread only)."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def handler(signum, frame):
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGTERM, handler)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 def _render(value: object) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
-    return str(value)
+    text = str(value)
+    if text.startswith("-") and not _is_number(text):
+        raise ValueError(f"Parameter value {text!r} would be read as an engine option.")
+    return text
+
+
+def _is_number(text: str) -> bool:
+    try:
+        float(text)
+    except ValueError:
+        return False
+    return True
