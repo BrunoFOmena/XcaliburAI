@@ -24,10 +24,27 @@ Rules:
 
 Every PR needs **one approving review** from someone other than its author, a review from a code owner (see [CODEOWNERS](.github/CODEOWNERS)), all conversations resolved, and green CI. The two cofounders have the same authority.
 
+## Issues
+
+Issues follow the template in [.github/ISSUE_TEMPLATE/issue.md](.github/ISSUE_TEMPLATE/issue.md) and carry a title prefix, a priority label (`P0`, `P1`, `P2`) and a milestone.
+
+| Prefix | Purpose |
+|---|---|
+| `[FEATURE]` | New feature |
+| `[BUG]` | Bug fix |
+| `[REFACTOR]` | Code refactoring |
+| `[DOCS]` | Documentation |
+| `[TEST]` | Tests: implementation or improvement |
+| `[CHORE]` | Maintenance and operational tasks |
+| `[IMPROVEMENT]` | Improvement of an existing feature |
+| `[SECURITY]` | Security fix or improvement |
+
+Example: `[FEATURE] Implement user authentication via JWT`
+
 ## Commits and versions
 
 - Use clear, imperative commit messages (`Add manifest validator`). Conventional prefixes (`feat:`, `fix:`, `docs:`, `chore:`) are welcome.
-- Versioning is [Semantic Versioning](https://semver.org). The single source of truth is `src/xcalibur/version.py`. The project starts at **0.0.0**; releases are tagged `vX.Y.Z` on `main`.
+- Versioning is `MAJOR.MINOR.PATCH` ([Semantic Versioning](https://semver.org)), starting at **0.0.0**. The single source of truth is `src/xcalibur/version.py`; releases are tagged `vX.Y.Z` on `main`. Full rules in [docs/VERSIONING.md](docs/VERSIONING.md).
 - Record user-visible changes in [CHANGELOG.md](CHANGELOG.md) under `Unreleased`.
 
 ## Development

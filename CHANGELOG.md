@@ -4,6 +4,13 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Added
+- Versioning rules (`docs/VERSIONING.md`) and a test that enforces version consistency.
+- Issue template following the project standard, and the issue title-prefix convention in `CONTRIBUTING.md`.
+
+### Removed
+- Placeholder YAML issue forms, replaced by the standard issue template.
+
 ## [0.0.0] - 2026-11-19
 
 ### Added
