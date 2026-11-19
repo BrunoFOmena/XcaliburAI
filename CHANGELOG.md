@@ -12,6 +12,7 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 - Governance: the CTO (@BrunoFOmena) is the sole code owner; the CEO (@MCamposDA) needs the CTO's approval. README, CONTRIBUTING and CODEOWNERS updated.
 
 ### Added
+- Nextflow adapter executes runs for real: per-run directory `runs/<run_id>/`, log and HTML report, `run-<id>.json` provenance (engine version, container, return code), `-resume`, SIGINT cancellation and a clear error when `nextflow` is missing (#5).
 - Versioning rules (`docs/VERSIONING.md`) and a test that enforces version consistency.
 - Issue template following the project standard, and the issue title-prefix convention in `CONTRIBUTING.md`.
 
