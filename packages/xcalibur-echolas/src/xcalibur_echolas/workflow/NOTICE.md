@@ -11,6 +11,7 @@ Changes made for XcaliburAI (no change to the scientific logic):
 - `nextflow.config`: a `params` block with the defaults (`mode`, `raw_data`, `reference`).
 - `modules/pca_phylogeny.nf`: helper scripts are resolved from `${projectDir}/scripts/`,
   so the pipeline runs from any launch directory.
+- Line endings normalized to LF (four files were CRLF); content otherwise unchanged.
 - Not imported: the web dashboard, the FastAPI backend, Docker files, and
   `scripts/vcf_generate_fasta.sh` (superseded by `vcf_generate_fasta2.sh`, not used by the pipeline).
 
