@@ -150,7 +150,7 @@ feature/*  ──PR──▶  homolog  ──PR──▶  main
 - `main` is the stable, released line. It only receives pull requests from `homolog`.
 - `homolog` is the integration and testing branch. Every other branch opens its PR against `homolog`.
 - Pull requests are mandatory, require one approving review, and must pass CI.
-- Versions follow [Semantic Versioning](https://semver.org); the project starts at **0.0.0**. See [CHANGELOG.md](CHANGELOG.md).
+- Versions follow `MAJOR.MINOR.PATCH` ([Semantic Versioning](https://semver.org)); the project starts at **0.0.0**. Rules in [docs/VERSIONING.md](docs/VERSIONING.md), history in [CHANGELOG.md](CHANGELOG.md).
 
 <br/>
 
