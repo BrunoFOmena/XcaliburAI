@@ -8,6 +8,7 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 - `issue-link` check: every PR must close an open issue with a closing keyword (required on `main` and `homolog`).
 
 ### Changed
+- Promotion flow: `main` now receives a PR directly from `homolog`, merged with a merge commit; the `promote/*` branches and the cherry-pick `-x` requirement are gone. The `branch-policy` check enforces it (#26).
 - `run_id` is validated (`^[A-Za-z0-9_-]+$`) in `RunSpec`, `RunRecord` and `Workspace.run_dir`; invalid ids raise `ValueError` before touching the disk (#21).
 - Each attempt of a run keeps its own provenance record (`run-<id>.json`, then `run-<id>.attempt-<n>.json`, with an `attempt` field); the previous HTML report is removed only when a resume actually starts; Nextflow no longer inherits stdin; `inputs` records absolute paths (#21).
 - Promotion flow: tested commits reach `main` by `git cherry-pick -x` through a `promote/*` branch (previously `homolog` → `main`). The `branch-policy` check now enforces it (`.github/scripts/check-promotion.sh`).

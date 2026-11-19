@@ -1,6 +1,6 @@
 <!--
 Work PRs target `homolog`.
-PRs into `main` come only from a `promote/*` branch of `git cherry-pick -x` commits already in `homolog`.
+PRs into `main` come only from `homolog`, merged with a merge commit (never squash).
 -->
 
 ## Issue
@@ -21,7 +21,7 @@ Closes #
 
 ## Checklist (promotion PR to `main`)
 - [ ] Lists `Closes #N` for every issue carried by the promoted commits
-- [ ] Branch is `promote/*`, cut from `main`
-- [ ] Every commit was brought with `git cherry-pick -x` from `homolog`
+- [ ] Head is `homolog` and it will be merged with a merge commit (not squash)
+- [ ] Everything currently in `homolog` was tested and approved
 - [ ] The change was tested in `homolog` and that result was approved
 - [ ] Version and CHANGELOG are updated if this is a release
