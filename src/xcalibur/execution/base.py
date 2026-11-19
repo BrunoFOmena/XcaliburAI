@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from xcalibur.registry import DomainPlugin
-from xcalibur.workspace import Workspace
+from xcalibur.workspace import Workspace, validate_run_id
 
 RunStatus = Literal["planned", "succeeded", "failed", "cancelled"]
 
@@ -29,6 +29,9 @@ class RunSpec:
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     dry_run: bool = True
     resume: bool = False
+
+    def __post_init__(self) -> None:
+        validate_run_id(self.run_id)
 
     @property
     def run_dir(self) -> Path:

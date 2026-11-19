@@ -74,10 +74,9 @@ class NextflowEngine:
 
         run_dir = spec.run_dir.absolute()
         run_dir.mkdir(parents=True, exist_ok=True)
-        # Nextflow refuses to overwrite an existing report; on resume it is regenerated.
-        _report_path(spec).unlink(missing_ok=True)
         log_path = run_dir / "nextflow.log"
         manifest = spec.plugin.manifest
+        attempt = RunRecord.next_attempt(run_dir, spec.run_id)
         record = RunRecord(
             run_id=spec.run_id,
             domain=manifest.name,
@@ -87,17 +86,21 @@ class NextflowEngine:
             container=manifest.workflow.container,
             command=command,
             params=spec.params,
-            inputs={k: str(v) for k, v in spec.inputs.items()},
+            inputs={k: str(v.absolute()) for k, v in spec.inputs.items()},
             resumed=spec.resume,
+            attempt=attempt,
         )
 
         status = "failed"
         returncode: int | None = None
-        with log_path.open("a" if spec.resume else "w", encoding="utf-8") as log:
+        with log_path.open("a" if attempt > 1 else "w", encoding="utf-8") as log:
+            # Nextflow refuses to overwrite a report; drop the old one only now that we start.
+            _report_path(spec).unlink(missing_ok=True)
             try:
                 proc = subprocess.Popen(  # noqa: S603 - built from manifest + validated params
                     command,
                     cwd=run_dir,
+                    stdin=subprocess.DEVNULL,
                     stdout=log,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,  # own process group, so children can be stopped too
