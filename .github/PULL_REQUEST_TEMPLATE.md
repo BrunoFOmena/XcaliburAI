@@ -1,6 +1,7 @@
 <!--
 Work PRs target `homolog`.
-PRs into `main` come only from `homolog`, merged with a merge commit (never squash).
+Every PR is merged with a merge commit (never squash or rebase).
+PRs into `main` come only from `homolog`.
 -->
 
 ## Issue
