@@ -33,7 +33,9 @@ Provenance record  +  Interpretation agents ──▶ report
 | `agents/supervisor.py` | `Supervisor` + `Router` protocol; deterministic `KeywordRouter` first, LLM router later |
 | `execution/base.py` | Engine-neutral `RunSpec`, `RunResult`, `WorkflowEngine` protocol |
 | `execution/nextflow.py` | Nextflow adapter; builds commands, supports dry runs |
-| `llm/base.py` | Provider-agnostic `LLMProvider`, `ProviderConfig` (keys come from env vars) |
+| `llm/base.py` | Provider-agnostic `LLMProvider` (`complete`, `generate` with tool calls, `stream_text`), `ProviderConfig` (keys come from env vars) |
+| `llm/anthropic_provider.py` | Anthropic provider on the official SDK (`xcalibur-ai[anthropic]`): system prompt, tools, streaming, bounded retries, clear errors, server-side refusal fallback |
+| `config.py` | `xcalibur.yaml` (user or workspace): provider, model and the NAME of the key variable; never the key |
 | `provenance.py` | `RunRecord`: versions, params, command, status |
 | `workspace.py` | Local on-disk layout (`data/`, `runs/`, `reports/`) |
 | `cli.py` | `version`, `domains`, `plan` (more with the agent layer) |
@@ -53,7 +55,7 @@ Provenance record  +  Interpretation agents ──▶ report
 
 ## Not built yet
 
-LLM providers, the agent runtime (tool calling, memory), `xcalibur chat` / `run`, Docker/HPC/cloud execution profiles, the data-acquisition agent, and report generation.
+Other LLM providers (OpenAI, Gemini, Ollama), the agent runtime (tool calling, memory), `xcalibur chat` / `run`, Docker/HPC/cloud execution profiles, the data-acquisition agent, and report generation.
 
 ## Prior art
 

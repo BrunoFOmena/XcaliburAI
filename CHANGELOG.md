@@ -5,6 +5,8 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 ## [Unreleased]
 
 ### Added
+- Anthropic LLM provider (optional extra `xcalibur-ai[anthropic]`, official SDK `anthropic>=2.11,<3`): system prompt, tool calls and streaming in the `LLMProvider` interface, bounded retries, clear auth/limit/network errors without the key, refusal handling with server-side fallback (#7).
+- `xcalibur init` (interactive or `--non-interactive`) saves the provider, model and the NAME of the key variable to `xcalibur.yaml`; `xcalibur check-llm` tests the connection (#7).
 - ECHOLAS pipeline imported into `xcalibur-echolas` (`main.nf`, 5 modules, scripts, `nextflow.config`) with its MIT notice. Input directories are now the `raw_data` and `reference` params.
 - `issue-link` check: every PR must close an open issue with a closing keyword (required on `main` and `homolog`).
 - Nextflow adapter executes runs for real: per-run directory `runs/<run_id>/`, log and HTML report, `run-<id>.json` provenance (engine version, container, return code), `-resume`, SIGINT/SIGTERM cancellation and a clear error when `nextflow` is missing (#5).
