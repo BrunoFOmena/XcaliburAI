@@ -2,8 +2,18 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
+
+_RUN_ID = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def validate_run_id(run_id: str) -> str:
+    """Return ``run_id`` if it is safe to use in a path; raise ``ValueError`` otherwise."""
+    if not isinstance(run_id, str) or _RUN_ID.fullmatch(run_id) is None:
+        raise ValueError(f"Invalid run_id {run_id!r}: use only letters, digits, '_' and '-'.")
+    return run_id
 
 
 @dataclass(frozen=True)
@@ -28,4 +38,4 @@ class Workspace:
         return self
 
     def run_dir(self, run_id: str) -> Path:
-        return self.runs / run_id
+        return self.runs / validate_run_id(run_id)
