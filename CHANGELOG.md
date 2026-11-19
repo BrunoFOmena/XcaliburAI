@@ -4,6 +4,9 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Changed
+- Governance: the CTO (@BrunoFOmena) is the sole code owner; the CEO (@MCamposDA) needs the CTO's approval. README, CONTRIBUTING and CODEOWNERS updated.
+
 ### Added
 - Versioning rules (`docs/VERSIONING.md`) and a test that enforces version consistency.
 - Issue template following the project standard, and the issue title-prefix convention in `CONTRIBUTING.md`.

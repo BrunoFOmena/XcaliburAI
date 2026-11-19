@@ -22,7 +22,11 @@ Rules:
 
 ## Reviews
 
-Every PR needs **one approving review** from someone other than its author, a review from a code owner (see [CODEOWNERS](.github/CODEOWNERS)), all conversations resolved, and green CI. The two cofounders have the same authority.
+Every PR needs **one approving review** from someone other than its author, a review from a code owner (see [CODEOWNERS](.github/CODEOWNERS)), all conversations resolved, and green CI.
+
+- The **CTO** (@BrunoFOmena) is the code owner and manages the branches. Every PR from anyone else, including the CEO, needs the CTO's approval.
+- The CTO can merge without a second approval (repository administrator).
+- The **CEO** (@MCamposDA) and any future contributor need the CTO's approval.
 
 ## Issues
 
