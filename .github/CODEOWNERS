@@ -1,7 +1,7 @@
-# Cofounders: same management level. Both are owners of everything.
-# With branch protection, a PR needs a review from a code owner other than its author.
-*                @BrunoFOmena @MCamposDA
+# The CTO is the code owner of the whole repository.
+# Pull requests from anyone else (including the CEO, @MCamposDA) need the CTO's approval.
+*                @BrunoFOmena
 
-# Governance files: keep explicit so changes to rules are always reviewed by both.
-/.github/        @BrunoFOmena @MCamposDA
-/LICENSE         @BrunoFOmena @MCamposDA
+# Governance files stay explicit so changes to the rules are always reviewed by the code owner.
+/.github/        @BrunoFOmena
+/LICENSE         @BrunoFOmena

@@ -156,12 +156,14 @@ feature/*  ──PR──▶  homolog  ──PR──▶  main
 
 # 👥 Cofounders
 
-XcaliburAI is co-founded by two cofounders with the same management level and decision authority.
+XcaliburAI is co-founded by two cofounders.
 
-| Cofounder | GitHub |
-|---|---|
-| Bruno F. Omena | [@BrunoFOmena](https://github.com/BrunoFOmena) |
-| MCamposDA | [@MCamposDA](https://github.com/MCamposDA) |
+| Cofounder | Role | GitHub |
+|---|---|---|
+| Bruno F. Omena | CTO, code owner of the repository | [@BrunoFOmena](https://github.com/BrunoFOmena) |
+| MCamposDA | CEO | [@MCamposDA](https://github.com/MCamposDA) |
+
+The CTO manages the repository and its branches and is the code owner: pull requests, including the CEO's, need the CTO's approval. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 <br/>
 
