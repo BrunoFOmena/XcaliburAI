@@ -1,2 +1,7 @@
-# Cofounders (mesmo nível de gerência)
-* @BrunoFOmena @MCamposDA
+# Cofounders: same management level. Both are owners of everything.
+# With branch protection, a PR needs a review from a code owner other than its author.
+*                @BrunoFOmena @MCamposDA
+
+# Governance files: keep explicit so changes to rules are always reviewed by both.
+/.github/        @BrunoFOmena @MCamposDA
+/LICENSE         @BrunoFOmena @MCamposDA
