@@ -1,3 +1,18 @@
 # ECHOLAS workflow
 
-The Nextflow pipeline (main.nf, modules/, scripts/) is imported here in a later change.
+Nextflow DSL2 pipeline for short-read population genomics, imported from
+[MCamposDA/ECHOLAS](https://github.com/MCamposDA/ECHOLAS) (MIT). See [NOTICE.md](NOTICE.md)
+for the license and the list of adaptations.
+
+| Path | Contents |
+|---|---|
+| `main.nf` | Orchestrator: reference indexing, then the 5 modules |
+| `modules/` | `trimming_qc`, `alignment_variant`, `genotyping`, `variant_filtering`, `pca_phylogeny` |
+| `scripts/` | Helpers called by the modules (PCA, FASTA generation) and standalone downstream tools (diversity, Fst, clade divergence, report) that are not part of `main.nf` |
+| `nextflow.config` | Parameter defaults, executor and resources |
+
+Parameters: `--mode` (only `AUTO`), `--raw_data <dir>` (`*.fastq.gz`) and
+`--reference <dir>` (exactly one `.fna`/`.fa`/`.fasta`). Outputs are written to `results/`
+in the launch directory.
+
+Limitation: variant calling assumes a diploid organism (`HaplotypeCaller --ploidy 2`).

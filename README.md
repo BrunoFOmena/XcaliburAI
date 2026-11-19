@@ -90,7 +90,7 @@ More detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The architecture pa
 
 ### ECHOLAS (current scope)
 
-*Evolutionary Comparison and Hierarchical Organization on Leishmania Analysis.* Adaptive QC and trimming → alignment → joint variant calling → filtering → PCA and maximum-likelihood phylogeny, plus diversity, Fst, and clade divergence. It originates from [MCamposDA/ECHOLAS](https://github.com/MCamposDA/ECHOLAS), authored by a cofounder.
+*Evolutionary Comparison and Hierarchical Organization on Leishmania Analysis.* Adaptive QC and trimming → alignment → joint variant calling → filtering → PCA and maximum-likelihood phylogeny, plus diversity, Fst, and clade divergence. It originates from [MCamposDA/ECHOLAS](https://github.com/MCamposDA/ECHOLAS), authored by a cofounder. The pipeline is included in [`packages/xcalibur-echolas`](packages/xcalibur-echolas) under its original MIT License ([notice](packages/xcalibur-echolas/src/xcalibur_echolas/workflow/NOTICE.md)).
 
 ### Expansion principles
 

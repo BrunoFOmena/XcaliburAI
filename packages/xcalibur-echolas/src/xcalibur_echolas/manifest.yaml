@@ -4,40 +4,47 @@ display_name: ECHOLAS - Leishmania population genomics
 version: 0.0.0
 description: >
   Short-read population genomics: adaptive QC and trimming, alignment, joint
-  variant calling, filtering, PCA and maximum-likelihood phylogeny.
+  variant calling, filtering, PCA and maximum-likelihood phylogeny. Variant
+  calling assumes a diploid organism (HaplotypeCaller --ploidy 2).
 keywords:
   [leishmania, population, genomics, variants, phylogeny, pca, fastq, vcf, snp, clade]
 
 workflow:
   engine: nextflow
-  entrypoint: workflow/main.nf   # populated when the ECHOLAS pipeline is imported
+  entrypoint: workflow/main.nf   # imported from MCamposDA/ECHOLAS (see workflow/NOTICE.md)
   container: null
 
+# Input names are also Nextflow params (--raw_data, --reference); both are directories.
 inputs:
   - name: raw_data
     kind: fastq
-    description: Gzip-compressed FASTQ files, paired (_1/_2 or _R1/_R2) or single-end.
+    description: Directory of gzip-compressed FASTQ files, paired (_1/_2 or _R1/_R2) or single-end.
     pattern: "*.fastq.gz"
     multiple: true
   - name: reference
     kind: fasta
-    description: Exactly one reference genome (.fna, .fa or .fasta).
+    description: Directory with exactly one reference genome (.fna, .fa or .fasta).
     pattern: "*.{fna,fa,fasta}"
 
 params:
   - name: mode
-    type: string
+    type: enum
+    choices: [AUTO]
     default: AUTO
-    description: Trimming mode; AUTO selects conservative, intermediate or aggressive by read quality.
+    description: >
+      Trimming mode. AUTO picks conservative, intermediate or aggressive trimming per
+      sample from its mean read quality. It is the only mode the pipeline implements.
 
 outputs:
   - name: joint_vcf
     kind: vcf
-    pattern: "results/**/*.vcf.gz"
-    description: Filtered joint call set.
+    pattern: "results/filtering/final/strain_PASS.vcf.gz"
+    description: Filtered joint call set (SNPs and indels that PASS the GATK filters).
   - name: pca
     kind: pdf
-    pattern: "results/**/strain_pca.pdf"
+    pattern: "results/pca/**/strain_PC1_PC2.pdf"
+    description: PCA plot (PC1 x PC2).
   - name: tree
     kind: newick
-    pattern: "results/**/strain_tree.treefile"
+    pattern: "results/phylogeny/tree/**/strain_tree.treefile"
+    description: Maximum-likelihood tree (IQ-TREE, UFBoot and SH-aLRT support).
