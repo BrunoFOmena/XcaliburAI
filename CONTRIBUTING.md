@@ -3,35 +3,27 @@
 ## Branch model
 
 ```
-work branch ──PR──▶ homolog ──(merge + test)──▶ cherry-pick ──▶ promote/* ──PR──▶ main
+work branch ──PR──▶ homolog ──(merge + test)──▶ PR ──▶ main
 ```
 
 | Branch | Purpose | Receives PRs from |
 |---|---|---|
-| `main` | Stable, released line | **Only `promote/*`** branches |
+| `main` | Stable, released line | **Only `homolog`** |
 | `homolog` | Integration and testing | Every work branch (`feat/*`, `fix/*`, `docs/*`, `chore/*`) |
-| `promote/<name>` | Cherry-picks of already-tested commits, cut from `main` | n/a |
 
 ### Flow, step by step
 
-1. **PR to `homolog`.** Cut a work branch from `homolog` and open the PR against `homolog`. Get it **approved**, then **merge**. Prefer *squash merge* so each PR becomes one commit that is easy to cherry-pick.
+1. **PR to `homolog`.** Cut a work branch from `homolog` and open the PR against `homolog`. Get it **approved**, then **merge**. Prefer *squash merge* so each PR becomes one commit and `homolog` stays linear.
 2. **Test on `homolog`.** The change is tested there (CI plus manual checks). Only when the test result is **approved** may it go to `main`.
-3. **Promote with cherry-pick.** Cut `promote/<name>` from `main` and bring in the tested commits:
-   ```bash
-   git fetch origin
-   git checkout -b promote/<name> origin/main
-   git cherry-pick -x <sha-from-homolog> [<sha> ...]   # -x is required
-   git push -u origin promote/<name>
-   ```
-4. **PR to `main`.** Open the PR from `promote/<name>` into `main`, get it **approved**, then **merge** (use a merge commit, so the cherry-picked commits and their `-x` trailers are preserved).
+3. **PR to `main`.** Open a PR from `homolog` into `main` (`gh pr create --base main --head homolog`). It carries **everything** that is in `homolog`, so confirm beforehand that all of it was tested and approved, and list `Closes #N` for every issue it carries.
+4. **Merge with a merge commit.** After approval, merge using a *merge commit* (never squash or rebase), so `main` and `homolog` keep a shared history and the next promotion has no conflicts.
 
 ### Rules enforced by CI (`branch-policy`)
 
-- PRs into `main` must come from a `promote/*` branch in this repository.
-- Every commit in that PR must be a `git cherry-pick -x` of a commit that **already exists in `homolog`**. Untested or direct commits are rejected.
+- PRs into `main` must come from the `homolog` branch of this repository, and must carry at least one new commit.
 - `main` and `promote/*` can never be merged into `homolog`.
 - Never push directly to `main` or `homolog`; both are protected.
-- Cherry-pick in the order commits entered `homolog`, to avoid conflicts. Because cherry-picks create new SHAs, `main` and `homolog` are not expected to share history.
+- Never commit directly to `main` (not even hotfixes): everything goes through `homolog` first, so the next promotion has no conflicts.
 - Branches are not deleted automatically; `main` and `homolog` are never deleted.
 
 ## Every PR closes an issue

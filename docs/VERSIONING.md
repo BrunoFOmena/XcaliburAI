@@ -46,7 +46,7 @@ A versão vive em **um só lugar**: [`src/xcalibur/version.py`](../src/xcalibur/
 
 1. Em uma branch cortada de `homolog`, atualize `version.py` (e a versão dos pacotes de domínio e do `manifest.yaml`).
 2. Mova as entradas de `Unreleased` para uma nova seção `## [X.Y.Z] - AAAA-MM-DD` no [CHANGELOG](../CHANGELOG.md).
-3. Abra o PR para `homolog`; após aprovação, merge e teste, faça o cherry-pick (`-x`) dos commits aprovados em uma branch `promote/vX.Y.Z` a partir de `main` e abra o PR para `main` (ver [CONTRIBUTING](../CONTRIBUTING.md)).
+3. Abra o PR para `homolog`; após aprovação, merge e teste, abra o PR `homolog` → `main` e faça o merge com merge commit (ver [CONTRIBUTING](../CONTRIBUTING.md)).
 4. Com o merge em `main`, crie a tag anotada `vX.Y.Z` nesse commit e publique o release no GitHub.
 
 Tags são sempre criadas a partir da `main` e nunca movidas ou apagadas.
