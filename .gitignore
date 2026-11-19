@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Workflow artifacts and genomic data (never commit)
+work/
+.nextflow/
+.nextflow.log*
+results/
+runs/
+*.fastq
+*.fastq.gz
+*.fq.gz
+*.bam
+*.cram

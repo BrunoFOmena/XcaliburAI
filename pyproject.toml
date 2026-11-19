@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xcalibur-ai"
+dynamic = ["version"]
+description = "AI agents over workflow engines for genomics: chat, run, interpret."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [
+  { name = "XcaliburAI cofounders" },
+]
+keywords = ["genomics", "bioinformatics", "nextflow", "agents", "llm"]
+classifiers = [
+  "Development Status :: 1 - Planning",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+  "Programming Language :: Python :: 3",
+]
+dependencies = [
+  "pydantic>=2.6",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "ruff>=0.5",
+]
+
+[project.scripts]
+xcalibur = "xcalibur.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "xcalibur.version.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "packages/xcalibur-echolas/src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
