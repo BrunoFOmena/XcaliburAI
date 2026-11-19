@@ -34,6 +34,15 @@ work branch ──PR──▶ homolog ──(merge + test)──▶ cherry-pick 
 - Cherry-pick in the order commits entered `homolog`, to avoid conflicts. Because cherry-picks create new SHAs, `main` and `homolog` are not expected to share history.
 - Branches are not deleted automatically; `main` and `homolog` are never deleted.
 
+## Every PR closes an issue
+
+**Every pull request must reference an open issue with a closing keyword** in its description (`Closes #12`, `Fixes #12` or `Resolves #12`). The `issue-link` check fails the PR otherwise, and it is required on `main` and `homolog`.
+
+- The issue must exist, be an issue (not a PR) and be open.
+- GitHub closes the issue automatically only when the change reaches the default branch (`main`). So the issue stays open while the work is in `homolog`, and the **promotion PR into `main` must list `Closes #N` for every issue it carries**.
+- Dependabot PRs are exempt.
+- Need a task with no issue yet? Open the issue first (use the [issue template](.github/ISSUE_TEMPLATE/issue.md)), then the PR.
+
 ## Reviews
 
 Every PR needs **one approving review** from someone other than its author, a review from a code owner (see [CODEOWNERS](.github/CODEOWNERS)), all conversations resolved, and green CI.
