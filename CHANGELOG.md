@@ -4,6 +4,9 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Added
+- `issue-link` check: every PR must close an open issue with a closing keyword (required on `main` and `homolog`).
+
 ### Changed
 - Promotion flow: tested commits reach `main` by `git cherry-pick -x` through a `promote/*` branch (previously `homolog` → `main`). The `branch-policy` check now enforces it (`.github/scripts/check-promotion.sh`).
 - Governance: the CTO (@BrunoFOmena) is the sole code owner; the CEO (@MCamposDA) needs the CTO's approval. README, CONTRIBUTING and CODEOWNERS updated.

@@ -1,0 +1,30 @@
+name: issue-link
+
+# Every PR must close an open issue (e.g. "Closes #12").
+# Note: GitHub closes the issue automatically when the closing PR/commit reaches the default
+# branch (main), so promotion PRs into main must also list "Closes #N" for the issues they carry.
+
+on:
+  pull_request:
+    branches: [main, homolog]
+    types: [opened, reopened, synchronize, edited]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  issue-link:
+    name: issue-link
+    runs-on: ubuntu-latest
+    # Dependabot PRs cannot reference project issues.
+    if: github.actor != 'dependabot[bot]'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require a closing reference to an open issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: .github/scripts/check-issue-link.sh
