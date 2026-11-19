@@ -21,7 +21,7 @@ work branch ──PR──▶ homolog ──(merge + test)──▶ PR ──▶
 ### Rules enforced by CI (`branch-policy`)
 
 - PRs into `main` must come from the `homolog` branch of this repository, and must carry at least one new commit.
-- `main` and `promote/*` can never be merged into `homolog`.
+- `main` and `promote/*` can never be merged into `homolog`. The only exception was a one-time sync (PR #29, `git merge -s ours`, no content change) that realigned the history left by the old cherry-pick flow.
 - Never push directly to `main` or `homolog`; both are protected.
 - Never commit directly to `main` (not even hotfixes): everything goes through `homolog` first, so the next promotion has no conflicts.
 - Branches are not deleted automatically; `main` and `homolog` are never deleted.
