@@ -1,8 +1,12 @@
 name: branch-policy
 
-# Enforces the branch model:  <any branch> -> homolog -> main
-#   - PRs into main must come from homolog (in this repository).
-#   - PRs from main are never allowed (no backward promotion).
+# Enforces the branch model:
+#   work branch --PR--> homolog  (review, merge, test)
+#   homolog --cherry-pick -x--> promote/* --PR--> main
+#
+#   - PRs into homolog: any branch except main and promote/*.
+#   - PRs into main: only from promote/* in this repository, and every commit must be
+#     a `git cherry-pick -x` of a commit that already exists in homolog.
 
 on:
   pull_request:
@@ -17,22 +21,31 @@ jobs:
     name: branch-policy
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch homolog
+        run: git fetch origin homolog:refs/remotes/origin/homolog
       - name: Check source and target branches
         env:
           BASE: ${{ github.base_ref }}
           HEAD: ${{ github.head_ref }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           THIS_REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           echo "PR: $HEAD ($HEAD_REPO) -> $BASE"
           if [ "$BASE" = "main" ]; then
-            if [ "$HEAD" != "homolog" ] || [ "$HEAD_REPO" != "$THIS_REPO" ]; then
-              echo "::error::Pull requests into 'main' must come from 'homolog'. Retarget this PR to 'homolog'."
-              exit 1
+            if [ "$HEAD_REPO" != "$THIS_REPO" ]; then
+              echo "::error::PRs into 'main' must come from this repository."; exit 1
             fi
+            .github/scripts/check-promotion.sh "$BASE_SHA" "$HEAD_SHA" "$HEAD"
           fi
-          if [ "$BASE" = "homolog" ] && [ "$HEAD" = "main" ]; then
-            echo "::error::'main' must never be merged back into 'homolog' via PR."
-            exit 1
+          if [ "$BASE" = "homolog" ]; then
+            case "$HEAD" in
+              main|promote/*)
+                echo "::error::'$HEAD' must never be merged into 'homolog'."; exit 1 ;;
+            esac
           fi
           echo "Branch policy OK"
