@@ -7,9 +7,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from xcalibur.version import __version__
+from xcalibur.workspace import validate_run_id
 
 
 class RunRecord(BaseModel):
@@ -27,10 +28,37 @@ class RunRecord(BaseModel):
     engine_version: str | None = None
     container: str | None = None
     resumed: bool = False
+    attempt: int = 1
     finished_at: datetime | None = None
+
+    @field_validator("run_id")
+    @classmethod
+    def _safe_run_id(cls, value: str) -> str:
+        return validate_run_id(value)
+
+    @property
+    def filename(self) -> str:
+        """First attempt: ``run-<id>.json``; later ones: ``run-<id>.attempt-<n>.json``."""
+        return self._name(self.run_id, self.attempt)
+
+    @staticmethod
+    def next_attempt(directory: Path, run_id: str) -> int:
+        """Number of the next attempt, from the records already in ``directory``."""
+        validate_run_id(run_id)
+        existing = {p.name for p in directory.glob(f"run-{run_id}*.json")}
+        attempt = 1
+        while RunRecord._name(run_id, attempt) in existing:
+            attempt += 1
+        return attempt
+
+    @staticmethod
+    def _name(run_id: str, attempt: int) -> str:
+        if attempt == 1:
+            return f"run-{run_id}.json"
+        return f"run-{run_id}.attempt-{attempt}.json"
 
     def write(self, directory: Path) -> Path:
         directory.mkdir(parents=True, exist_ok=True)
-        path = directory / f"run-{self.run_id}.json"
+        path = directory / self.filename
         path.write_text(self.model_dump_json(indent=2), encoding="utf-8")
         return path

@@ -169,3 +169,49 @@ print(NextflowEngine({fake_nextflow(tmp_path)!r}).run(s).status, flush=True)
     assert out.strip() == "cancelled"
     record = next((tmp_path / "ws" / "runs").glob("*/run-*.json"))
     assert json.loads(record.read_text())["status"] == "cancelled"
+
+
+@pytest.mark.parametrize("bad", ["../x", "a/b", "", "a b", "x\n", ".."])
+def test_invalid_run_id_is_rejected_without_touching_disk(tmp_path, bad):
+    ws = Workspace(tmp_path / "ws")
+    with pytest.raises(ValueError, match="Invalid run_id"):
+        RunSpec(plugin=make_plugin(), params={}, workspace=ws, run_id=bad)
+    with pytest.raises(ValueError, match="Invalid run_id"):
+        ws.run_dir(bad)
+    assert not (tmp_path / "ws").exists()
+
+
+def test_resume_keeps_one_record_per_attempt(tmp_path):
+    engine = NextflowEngine(fake_nextflow(tmp_path))
+    first = spec(tmp_path, params={"fail": True})
+    r1 = engine.run(first)
+    r2 = engine.run(spec(tmp_path, run_id=first.run_id, resume=True))
+    r3 = engine.run(spec(tmp_path, run_id=first.run_id, resume=True))
+    assert r1.record_path.name == f"run-{first.run_id}.json"
+    assert r2.record_path.name == f"run-{first.run_id}.attempt-2.json"
+    assert r3.record_path.name == f"run-{first.run_id}.attempt-3.json"
+    records = [json.loads(r.record_path.read_text()) for r in (r1, r2, r3)]
+    assert [r["attempt"] for r in records] == [1, 2, 3]
+    assert records[0]["status"] == "failed" and records[0]["resumed"] is False
+    assert records[1]["resumed"] is True
+
+
+def test_report_kept_when_resume_cannot_start(tmp_path):
+    engine = NextflowEngine(fake_nextflow(tmp_path))
+    first = spec(tmp_path)
+    run_dir = engine.run(first).run_dir
+    report = run_dir / "nextflow_report.html"
+    report.write_text("old")
+    with pytest.raises(EngineNotFoundError):
+        NextflowEngine("definitely-not-installed").run(
+            spec(tmp_path, run_id=first.run_id, resume=True)
+        )
+    assert report.read_text() == "old"
+
+
+def test_record_inputs_are_absolute_and_stdin_is_closed(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    s = spec(tmp_path, inputs={"reads": Path("data/r.fq")})
+    result = NextflowEngine(fake_nextflow(tmp_path)).run(s)
+    inputs = json.loads(result.record_path.read_text())["inputs"]
+    assert inputs == {"reads": str(tmp_path / "data" / "r.fq")}
