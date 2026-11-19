@@ -126,7 +126,7 @@ def test_generate_returns_tool_calls():
     assert server.body()["tools"][0]["name"] == "run"
 
 
-def test_stream_text_yields_deltas():
+def sse(stop_reason="end_turn", parts=("Hel", "lo"), **message_delta):
     events = [
         ("message_start", {"type": "message_start", "message": message([])}),
         (
@@ -146,25 +146,46 @@ def test_stream_text_yields_deltas():
                     "delta": {"type": "text_delta", "text": part},
                 },
             )
-            for part in ("Hel", "lo")
+            for part in parts
         ],
         ("content_block_stop", {"type": "content_block_stop", "index": 0}),
         (
             "message_delta",
             {
                 "type": "message_delta",
-                "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                "delta": {"stop_reason": stop_reason, "stop_sequence": None, **message_delta},
                 "usage": {"output_tokens": 2},
             },
         ),
         ("message_stop", {"type": "message_stop"}),
     ]
-    sse = "".join(f"event: {name}\ndata: {json.dumps(data)}\n\n" for name, data in events)
-    server = Server(
-        httpx2.Response(200, text=sse, headers={"content-type": "text/event-stream"})
-    )
-    assert list(provider(server, refusal_fallback=False).stream_text(CHAT)) == ["Hel", "lo"]
-    assert server.body()["stream"] is True
+    text = "".join(f"event: {name}\ndata: {json.dumps(data)}\n\n" for name, data in events)
+    return httpx2.Response(200, text=text, headers={"content-type": "text/event-stream"})
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_stream_text_yields_deltas(fallback):
+    server = Server(sse())
+    chunks = list(provider(server, refusal_fallback=fallback).stream_text(CHAT))
+    assert chunks == ["Hel", "lo"]
+    body = server.body()
+    assert body["stream"] is True
+    assert ("fallbacks" in body) is fallback
+
+
+def test_refusal_during_stream_raises_after_partial_text():
+    server = Server(sse(stop_reason="refusal", parts=("partial",)))
+    stream = provider(server).stream_text(CHAT)
+    assert next(stream) == "partial"
+    with pytest.raises(LLMRefusalError):
+        list(stream)
+
+
+def test_auth_error_while_streaming():
+    server = Server(error(401, "authentication_error", "invalid x-api-key"))
+    with pytest.raises(LLMAuthError) as info:
+        list(provider(server).stream_text(CHAT))
+    assert SECRET not in str(info.value)
 
 
 def test_refusal_raises_with_category():

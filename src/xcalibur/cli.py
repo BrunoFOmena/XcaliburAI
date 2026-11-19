@@ -10,7 +10,7 @@ from pathlib import Path
 
 from xcalibur.config import (
     load_llm_config,
-    resolve_config_path,
+    locate_config,
     save_llm_config,
     user_config_path,
     validate_env_name,
@@ -101,6 +101,13 @@ def _cmd_init(args: argparse.Namespace) -> int:
     except LLMConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    if args.base_url and args.config is None and args.workspace is not None:
+        print(
+            "error: --base-url is not allowed in a workspace configuration (it would send "
+            "your API key to that server); use the user configuration or --config",
+            file=sys.stderr,
+        )
+        return 2
 
     if args.config is not None:
         path = args.config
@@ -120,7 +127,11 @@ def _cmd_init(args: argparse.Namespace) -> int:
         base_url=args.base_url,
         effort=args.effort,
     )
-    save_llm_config(config, path)
+    try:
+        save_llm_config(config, path)
+    except LLMConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     print(f"saved {path}")
     if os.environ.get(key_env):
         print(f"{key_env} is set (the key itself is not saved)")
@@ -154,9 +165,8 @@ def _check(config: ProviderConfig) -> int:
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
-    path = resolve_config_path(args.config, args.workspace)
     try:
-        config = load_llm_config(path)
+        config = load_llm_config(locate_config(args.config, args.workspace))
     except LLMConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

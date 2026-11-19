@@ -6,7 +6,7 @@ import yaml
 from xcalibur import cli
 from xcalibur.config import load_llm_config, save_llm_config
 from xcalibur.llm.base import ProviderConfig
-from xcalibur.llm.errors import LLMAuthError, LLMConfigError
+from xcalibur.llm.errors import LLMAuthError, LLMConfigError, LLMError
 
 SECRET = "sk-ant-test-SECRET-456"
 
@@ -83,6 +83,9 @@ def test_check_llm_reports_success_and_auth_failure(tmp_path, monkeypatch, capsy
     monkeypatch.setattr(cli, "create_provider", lambda c: Fake(LLMAuthError("rejected")))
     assert cli.main(["check-llm", "--workspace", str(tmp_path)]) == 3
 
+    monkeypatch.setattr(cli, "create_provider", lambda c: Fake(LLMError("server error")))
+    assert cli.main(["check-llm", "--workspace", str(tmp_path)]) == 4
+
 
 def test_check_llm_without_configuration(tmp_path, capsys):
     assert cli.main(["check-llm", "--config", str(tmp_path / "none.yaml")]) == 2
@@ -100,3 +103,59 @@ def test_config_round_trip_and_validation(tmp_path):
 
     with pytest.raises(LLMConfigError, match="NAME"):
         save_llm_config(ProviderConfig(provider="anthropic", model="m", api_key_env=SECRET), path)
+
+
+WORKSPACE_WITH_BASE_URL = (
+    "llm:\n  provider: anthropic\n  model: m\n  base_url: https://attacker.example\n"
+)
+
+
+def test_workspace_config_cannot_set_base_url(tmp_path, monkeypatch, capsys):
+    (tmp_path / "xcalibur.yaml").write_text(WORKSPACE_WITH_BASE_URL)
+    built = []
+    monkeypatch.setattr(cli, "create_provider", lambda c: built.append(c))
+    assert cli.main(["check-llm", "--workspace", str(tmp_path)]) == 2
+    monkeypatch.chdir(tmp_path)  # ./xcalibur.yaml picked up implicitly
+    assert cli.main(["check-llm"]) == 2
+    assert "base_url" in capsys.readouterr().err and not built
+
+
+def test_base_url_is_allowed_from_an_explicit_config(tmp_path):
+    path = tmp_path / "xcalibur.yaml"
+    path.write_text(WORKSPACE_WITH_BASE_URL)
+    assert load_llm_config(path).base_url == "https://attacker.example"
+
+
+def test_init_refuses_base_url_in_a_workspace(tmp_path, capsys):
+    assert init(tmp_path, "--base-url", "https://proxy.example") == 2
+    assert "base-url" in capsys.readouterr().err
+    assert not (tmp_path / "xcalibur.yaml").exists()
+
+
+BASE = "llm:\n  provider: anthropic\n  model: m\n"
+
+
+@pytest.mark.parametrize(
+    "content, message",
+    [
+        ("llm: [", "not valid YAML"),
+        ("- a\n- b\n", "no 'llm' section"),
+        ("llm:\n  provider: anthropic\n", "missing llm settings model"),
+        (BASE + "  max_tokens: abc\n", "'max_tokens' must be int"),
+        (BASE + "  max_tokens: true\n", "'max_tokens' must be int"),
+        (BASE + "  timeout: 0\n", "greater than zero"),
+    ],
+)
+def test_invalid_config_is_a_clear_error_without_traceback(tmp_path, capsys, content, message):
+    path = tmp_path / "bad.yaml"
+    path.write_text(content)
+    assert cli.main(["check-llm", "--config", str(path)]) == 2
+    err = capsys.readouterr().err
+    assert message in err and "Traceback" not in err
+
+
+def test_init_reports_a_config_that_cannot_be_written(tmp_path, capsys):
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    assert cli.main(["init", "--non-interactive", "--config", str(blocker / "c.yaml")]) == 2
+    assert "Could not write" in capsys.readouterr().err

@@ -24,7 +24,8 @@ DEFAULT_API_KEY_ENV = "ANTHROPIC_API_KEY"
 INSTALL_HINT = "pip install 'xcalibur-ai[anthropic]'"
 
 # Server-side refusal fallback (beta): the API re-runs a declined request on the
-# recommended fallback model. Only these models accept fallbacks="default".
+# recommended fallback model. Only these models accept fallbacks="default"; update this set
+# when Anthropic adds models that support it (see the "refusals and fallback" API docs).
 _FALLBACK_BETA = "server-side-fallback-2026-07-01"
 _FALLBACK_MODELS = frozenset(
     {
