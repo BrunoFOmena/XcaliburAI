@@ -8,7 +8,7 @@ import pytest
 
 from xcalibur.llm import create_provider
 from xcalibur.llm.anthropic_provider import AnthropicProvider
-from xcalibur.llm.base import Message, ProviderConfig, ToolSpec
+from xcalibur.llm.base import Message, ProviderConfig, ToolCall, ToolResult, ToolSpec
 from xcalibur.llm.errors import (
     LLMAuthError,
     LLMConfigError,
@@ -124,6 +124,64 @@ def test_generate_returns_tool_calls():
     assert result.text == "Running." and result.stop_reason == "tool_use"
     assert result.tool_calls[0].name == "run" and result.tool_calls[0].input == {"mode": "AUTO"}
     assert server.body()["tools"][0]["name"] == "run"
+
+
+def test_tool_turns_become_tool_use_and_tool_result_blocks():
+    server = Server(message([{"type": "text", "text": "Done."}]))
+    history = [
+        *CHAT,
+        Message(
+            role="assistant",
+            content="Planning.",
+            tool_calls=(ToolCall(id="toolu_1", name="plan_run", input={"domain": "echolas"}),),
+        ),
+        Message(
+            role="user",
+            tool_results=(
+                ToolResult(tool_call_id="toolu_1", content='{"error": {}}', is_error=True),
+            ),
+        ),
+    ]
+    assert provider(server).generate(history).text == "Done."
+    turns = server.body()["messages"]
+    assert turns[1] == {
+        "role": "assistant",
+        "content": [
+            {"type": "text", "text": "Planning."},
+            {"type": "tool_use", "id": "toolu_1", "name": "plan_run",
+             "input": {"domain": "echolas"}},
+        ],
+    }
+    assert turns[2] == {
+        "role": "user",
+        "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_1", "content": '{"error": {}}',
+             "is_error": True},
+        ],
+    }
+
+
+def test_tool_call_without_text_and_results_followed_by_text():
+    server = Server(message([{"type": "text", "text": "ok"}]))
+    history = [
+        Message(role="user", content="go"),
+        Message(role="assistant", tool_calls=(ToolCall(id="t1", name="x", input={}),)),
+        Message(role="user", content="and now?", tool_results=(ToolResult("t1", "{}"),)),
+    ]
+    provider(server).generate(history)
+    turns = server.body()["messages"]
+    assert turns[1]["content"] == [{"type": "tool_use", "id": "t1", "name": "x", "input": {}}]
+    assert turns[2]["content"] == [
+        {"type": "tool_result", "tool_use_id": "t1", "content": "{}"},
+        {"type": "text", "text": "and now?"},
+    ]
+
+
+def test_message_rejects_tool_parts_on_the_wrong_role():
+    with pytest.raises(ValueError):
+        Message(role="user", tool_calls=(ToolCall(id="t", name="x", input={}),))
+    with pytest.raises(ValueError):
+        Message(role="assistant", tool_results=(ToolResult("t", "{}"),))
 
 
 def sse(stop_reason="end_turn", parts=("Hel", "lo"), **message_delta):

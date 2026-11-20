@@ -8,14 +8,8 @@ from typing import Any, Literal, Protocol
 
 
 @dataclass(frozen=True)
-class Message:
-    role: Literal["system", "user", "assistant"]
-    content: str
-
-
-@dataclass(frozen=True)
 class ToolSpec:
-    """A tool the model may call (used by the agent runtime, issue #8)."""
+    """A tool the model may call (the agent runtime builds these from its tools)."""
 
     name: str
     description: str
@@ -27,6 +21,32 @@ class ToolCall:
     id: str
     name: str
     input: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    """What a tool call returned, sent back to the model in the next user turn."""
+
+    tool_call_id: str
+    content: str
+    """Serialized result (JSON text); errors are structured too, with ``is_error`` set."""
+    is_error: bool = False
+
+
+@dataclass(frozen=True)
+class Message:
+    role: Literal["system", "user", "assistant"]
+    content: str = ""
+    tool_calls: tuple[ToolCall, ...] = ()
+    """Assistant turns only: the tool calls the model asked for in this turn."""
+    tool_results: tuple[ToolResult, ...] = ()
+    """User turns only: results of the previous turn's tool calls."""
+
+    def __post_init__(self) -> None:
+        if self.tool_calls and self.role != "assistant":
+            raise ValueError("only assistant messages can carry tool calls")
+        if self.tool_results and self.role != "user":
+            raise ValueError("only user messages can carry tool results")
 
 
 @dataclass(frozen=True)

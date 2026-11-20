@@ -108,7 +108,7 @@ class AnthropicProvider:
         self, messages: list[Message], tools: list[ToolSpec] | None
     ) -> tuple[Any, dict[str, Any]]:
         system = "\n\n".join(m.content for m in messages if m.role == "system")
-        turns = [{"role": m.role, "content": m.content} for m in messages if m.role != "system"]
+        turns = [_turn(m) for m in messages if m.role != "system"]
         if not turns:
             raise LLMError("At least one user message is required.")
         request: dict[str, Any] = {
@@ -154,6 +154,32 @@ class AnthropicProvider:
 
     def _errors(self) -> _ErrorMapper:
         return _ErrorMapper(self)
+
+
+def _turn(message: Message) -> dict[str, Any]:
+    """One conversation turn; tool calls and results become content blocks."""
+    if not message.tool_calls and not message.tool_results:
+        return {"role": message.role, "content": message.content}
+    blocks: list[dict[str, Any]] = []
+    # Tool results must come first in a user turn; text, if any, follows them.
+    for result in message.tool_results:
+        block: dict[str, Any] = {
+            "type": "tool_result",
+            "tool_use_id": result.tool_call_id,
+            "content": result.content,
+        }
+        if result.is_error:
+            block["is_error"] = True
+        blocks.append(block)
+    if message.content:
+        text = {"type": "text", "text": message.content}
+        if message.tool_calls:
+            blocks.insert(0, text)  # assistant: its text precedes the tool calls
+        else:
+            blocks.append(text)
+    for call in message.tool_calls:
+        blocks.append({"type": "tool_use", "id": call.id, "name": call.name, "input": call.input})
+    return {"role": message.role, "content": blocks}
 
 
 class _ErrorMapper:
