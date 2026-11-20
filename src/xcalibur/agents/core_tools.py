@@ -101,9 +101,25 @@ def preview_run(args: RunArgs, ctx: ToolContext) -> dict[str, Any]:
 
 
 def run_pipeline(args: RunArgs, ctx: ToolContext) -> dict[str, Any]:
+    if ctx.approved_plan is None:
+        raise ToolError(
+            "run_pipeline runs only with a plan the user approved.", kind="not_confirmed"
+        )
     spec = _spec(args, ctx, dry_run=False)
+    engine = _engine(ctx)
     try:
-        result = _engine(ctx).run(spec)
+        command = engine.build_command(spec)
+    except ValueError as exc:
+        raise ToolError(str(exc), kind="invalid_params") from None
+    if command != ctx.approved_plan.get("command"):
+        raise ToolError(
+            "The command changed after it was approved; nothing was executed. Plan again.",
+            kind="plan_changed",
+            approved=ctx.approved_plan.get("command"),
+            current=command,
+        )
+    try:
+        result = engine.run(spec)
     except EngineNotFoundError as exc:
         raise ToolError(str(exc), kind="engine_not_found") from None
     except ValueError as exc:

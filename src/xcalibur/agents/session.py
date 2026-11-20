@@ -13,7 +13,7 @@ from xcalibur.llm.base import Message
 from xcalibur.workspace import validate_run_id
 
 ToolCallStatus = Literal[
-    "ok", "invalid_arguments", "unknown_tool", "declined", "error", "internal_error"
+    "ok", "invalid_arguments", "unknown_tool", "declined", "error", "internal_error", "interrupted"
 ]
 
 
@@ -74,8 +74,14 @@ class Session:
         if self.directory is None:
             return None
         safe_id = "".join(c if c.isalnum() or c in "_-" else "_" for c in call_id)[:64]
-        path = self.directory / "tool-results" / f"{step:03d}-{safe_id}.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
+        folder = self.directory / "tool-results"
+        folder.mkdir(parents=True, exist_ok=True)
+        # Numbered across the whole session: steps restart each turn and ids may repeat.
+        seq = len(list(folder.glob("*.json"))) + 1
+        path = folder / f"{seq:04d}-step{step:03d}-{safe_id}.json"
+        while path.exists():
+            seq += 1
+            path = folder / f"{seq:04d}-step{step:03d}-{safe_id}.json"
         path.write_text(text, encoding="utf-8")
         return path
 

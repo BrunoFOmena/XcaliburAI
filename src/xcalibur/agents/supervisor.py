@@ -110,9 +110,13 @@ class LLMRouter:
         )
 
 
+UNKNOWN_CONFIDENCE = 0.5
+
+
 def _confidence(value: object) -> float:
+    """The model's confidence clamped to [0, 1]; neutral when missing or not a number."""
     if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
-        return 1.0
+        return UNKNOWN_CONFIDENCE
     return min(1.0, max(0.0, float(value)))
 
 

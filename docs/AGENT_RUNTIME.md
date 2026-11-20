@@ -23,7 +23,7 @@ The implementation is our own (`src/xcalibur/agents/`); no orchestration library
 | Field | Meaning |
 |---|---|
 | `text` | The answer to show the user |
-| `stop_reason` | `completed` (the model answered), `max_steps` (limit reached; the text says so) or `llm_error` (the provider failed; `error` has the message) |
+| `stop_reason` | `completed` (the model answered; an empty answer becomes a short placeholder), `max_steps` (limit reached; the text says so) or `llm_error` (the provider failed; `error` has the message) |
 | `steps` | Model calls made in this turn |
 | `tool_calls` | `ToolCallRecord`s of this turn |
 
@@ -37,7 +37,9 @@ Options:
 | `confirmation` | `DenyAll()` | Policy for tools that act (see below) |
 | `allowed_tools` | all | Subset of tool names offered to the model |
 
-`LLMAgent` wraps a loop and a session as an `Agent` (`handle(AgentRequest) -> AgentResponse`). `LLMAgent.from_spec(spec, provider, tools, context)` appends `AgentSpec.instructions` to the system prompt and offers only `AgentSpec.tools` when the spec lists them.
+The history always stays valid for the provider: if tool execution is interrupted (Ctrl+C, a failing audit write), every unfinished call still gets an `interrupted` error result before the exception propagates, so the session can continue.
+
+`LLMAgent` wraps a loop and a session as an `Agent` (`handle(AgentRequest) -> AgentResponse`). `LLMAgent.from_spec(spec, provider, tools, context)` appends `AgentSpec.instructions` to the system prompt and offers only `AgentSpec.tools` when the spec lists them. Those are the names the model sees, so a domain tool is listed with its prefix (`echolas__count_samples`, not `count_samples`).
 
 ## Defining a tool (`agents/tools.py`)
 
@@ -59,10 +61,10 @@ COUNT = Tool("count_samples", "Count the samples of a run.", CountArgs, count_sa
 Rules:
 
 - **Name:** 1 to 64 letters, digits, `_` or `-`.
-- **Input model:** a subclass of `ToolInput` (`extra="forbid"`). Its JSON schema is what the model sees; the runtime validates every call against it before the function runs.
-- **Function:** `func(args, context)` receives the validated model and a `ToolContext` (`domains`, `workspace`, `engine`, `session`, `extra`). It returns anything JSON-serializable; Pydantic models and paths are converted.
+- **Input model:** a subclass of `ToolInput` (`extra="forbid"`). Its JSON schema is what the model sees; the runtime validates every call against it before the function runs. Only the top-level model is checked for `extra="forbid"`: nested models must also subclass `ToolInput` (or set `extra="forbid"`), otherwise unknown nested fields are silently dropped.
+- **Function:** `func(args, context)` receives the validated model and a `ToolContext` (`domains`, `workspace`, `engine`, `session`, `approved_plan`, `extra`). It returns anything JSON-serializable; Pydantic models and paths are converted.
 - **Expected failures:** raise `ToolError(message, kind=..., **details)`. The model receives `{"error": {"type": kind, "message": ..., ...details}}` and can correct itself.
-- **Acting tools:** set `requires_confirmation=True` and give a `preview(args, context)` that returns the exact plan (for runs: parameters, inputs, `command`, `command_text`, `run_dir`). The runtime shows the preview to the confirmation policy and runs the function only if it approves.
+- **Acting tools:** set `requires_confirmation=True` and give a `preview(args, context)` that returns the exact plan (for runs: parameters, inputs, `command`, `command_text`, `run_dir`). The runtime shows the preview to the confirmation policy and runs the function only if it approves, passing the approved preview as `context.approved_plan`. The function should rebuild what it is about to do and refuse if it differs from the approved plan (`run_pipeline` refuses with `plan_changed` when the command differs, and with `not_confirmed` when there is no approved plan).
 - **Never** turn model text into a shell string. Build argument lists from validated values (the engine adapter does this for workflows).
 
 ### What the model receives
@@ -75,7 +77,8 @@ Rules:
 | `ToolError` | `{"error": {"type": <kind>, "message": ..., ...}}` | yes | `error` |
 | Confirmation declined | `{"error": {"type": "confirmation_declined", "plan": {...}}}` | yes | `declined` |
 | Unexpected exception | `{"error": {"type": "internal_error", "message": "<Type>: <msg>"}}` | yes | `internal_error` |
-| Too long | `{"truncated": true, "total_chars": N, "full_result_path": ..., "preview": ...}` | as above | as above |
+| Interrupted (Ctrl+C, audit write failed) | `{"error": {"type": "interrupted", ...}}`, then the exception propagates | yes | `interrupted` |
+| Too long | `{"truncated": true, "total_chars": N, "full_result_path": ..., "preview": ...}`; the whole note, escaping included, fits in `max_result_chars` | as above | as above |
 
 Nothing runs when the arguments are invalid, the tool is unknown or the confirmation is declined.
 
@@ -100,7 +103,7 @@ The model is also instructed to call `plan_run` and explain the plan (domain, pa
 | `get_run_status` | `run_id` | Latest attempt's status, return code, command and the last log lines |
 | `read_results` | `run_id` | Files matching each output declared in the manifest, with sizes |
 
-Relative input paths are resolved against the workspace root. Parameters go through `DomainManifest.resolve_params` (unknown or out-of-range values are errors). Domain-specific input checks belong to the domain package.
+Relative input paths are resolved against the workspace root (the current directory for `plan_run` without a workspace). Input paths are **not** confined to the workspace: absolute paths, `~` and `..` are accepted, because data often lives elsewhere. The command stays safe (paths are made absolute and passed as separate arguments) and the confirmation shows every input path; checks specific to a domain's data belong to the domain package. Parameters go through `DomainManifest.resolve_params` (unknown or out-of-range values are errors). Domain-specific input checks belong to the domain package.
 
 ## Domain tools and agents
 
@@ -108,11 +111,11 @@ A domain package contributes tools through `DomainPlugin(tools=(...))` and agent
 
 ## Routing (`agents/supervisor.py`)
 
-`LLMRouter(provider)` asks the model to call a single `choose_domain` tool whose `domain` is one of the installed domains or `none`. If the provider fails, the model calls no tool or names an unknown domain, the decision comes from the `KeywordRouter` (or the `fallback` router given) and the reason says why.
+`LLMRouter(provider)` asks the model to call a single `choose_domain` tool whose `domain` is one of the installed domains or `none`. When the model omits the confidence (or sends something that is not a number), the decision gets a neutral 0.5. If the provider fails, the model calls no tool or names an unknown domain, the decision comes from the `KeywordRouter` (or the `fallback` router given) and the reason says why.
 
 ## Audit (`agents/session.py`)
 
-`Session` holds the message history and a `ToolCallRecord` per call: step, call id, tool, arguments as sent by the model, status, start and end times, confirmation outcome, whether the result was truncated and where it was saved. With `Session(directory=...)`, each record is appended to `audit.jsonl` and long results go to `tool-results/`. Long-term persistence of sessions is not built yet.
+`Session` holds the message history and a `ToolCallRecord` per call: step, call id, tool, arguments as sent by the model, status, start and end times, confirmation outcome, whether the result was truncated and where it was saved. With `Session(directory=...)`, each record is appended to `audit.jsonl` and long results go to `tool-results/<n>-step<step>-<call id>.json`, numbered across the session so a file is never overwritten. Long-term persistence of sessions is not built yet.
 
 ## Testing without network
 

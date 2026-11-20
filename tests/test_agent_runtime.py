@@ -7,8 +7,8 @@ import pytest
 
 from xcalibur.agents.base import AgentRequest, AgentSpec
 from xcalibur.agents.confirmation import AllowAll, CallbackConfirmation
-from xcalibur.agents.core_tools import CORE_TOOLS, build_tool_registry
-from xcalibur.agents.runtime import AgentLoop, LLMAgent
+from xcalibur.agents.core_tools import CORE_TOOLS, RunArgs, build_tool_registry, run_pipeline
+from xcalibur.agents.runtime import EMPTY_ANSWER, AgentLoop, LLMAgent
 from xcalibur.agents.session import Session
 from xcalibur.agents.supervisor import LLMRouter, Supervisor
 from xcalibur.agents.tools import Tool, ToolContext, ToolError, ToolInput, ToolRegistry
@@ -308,6 +308,142 @@ def test_long_results_are_truncated_and_saved(env, tmp_path):
     assert audit[0]["result_path"] == str(saved)
 
 
+def test_truncated_note_fits_even_when_escaping_grows_it(env, tmp_path):
+    *_, context = env
+
+    class Args(ToolInput):
+        pass
+
+    nasty = '"\\' * 4000  # every character needs escaping in JSON
+    tools = ToolRegistry([Tool("nasty", "Escapes.", Args, lambda a, c: nasty)])
+    provider = FakeProvider.scripted(tool_call("nasty", "c1"), "ok")
+    session = Session(directory=tmp_path / "s")
+    AgentLoop(provider, tools, context, max_result_chars=1000).run("hi", session)
+    content = session.messages[2].tool_results[0].content
+    assert len(content) <= 1000
+    note = json.loads(content)
+    assert note["truncated"] is True and nasty.startswith(note["preview"])
+    assert json.loads(Path(note["full_result_path"]).read_text())["result"] == nasty
+
+
+def test_saved_results_are_never_overwritten(env, tmp_path):
+    *_, context = env
+
+    class Args(ToolInput):
+        n: int
+
+    tools = ToolRegistry([Tool("big", "Large.", Args, lambda a, c: str(a.n) * 3000)])
+    provider = FakeProvider.scripted(
+        tool_call("big", "same", n=1), "first", tool_call("big", "same", n=2), "second"
+    )
+    session = Session(directory=tmp_path / "s")
+    loop = AgentLoop(provider, tools, context, max_result_chars=500)
+    loop.run("one", session)
+    loop.run("two", session)
+    paths = [r.result_path for r in session.tool_calls]
+    assert len(set(paths)) == 2
+    assert [json.loads(Path(p).read_text())["result"][0] for p in paths] == ["1", "2"]
+
+
+def test_interruption_leaves_a_valid_history(env, tmp_path):
+    *_, context = env
+
+    class Args(ToolInput):
+        pass
+
+    def stop(args, ctx):
+        raise KeyboardInterrupt
+
+    tools = build_tool_registry(context.domains)
+    tools.register(Tool("stop", "Ctrl+C.", Args, stop))
+    provider = FakeProvider.scripted(
+        Completion(
+            text="",
+            tool_calls=[
+                ToolCall("c1", "list_domains", {}),
+                ToolCall("c2", "stop", {}),
+                ToolCall("c3", "list_domains", {}),
+            ],
+        ),
+        "Recovered.",
+    )
+    session = Session(directory=tmp_path / "s")
+    loop = AgentLoop(provider, tools, context)
+    with pytest.raises(KeyboardInterrupt):
+        loop.run("go", session)
+
+    last = session.messages[-1]
+    assert last.role == "user" and [r.tool_call_id for r in last.tool_results] == [
+        "c1",
+        "c2",
+        "c3",
+    ]
+    assert [r.is_error for r in last.tool_results] == [False, True, True]
+    assert json.loads(last.tool_results[1].content)["error"]["type"] == "interrupted"
+    assert [r.status for r in session.tool_calls] == ["ok", "interrupted", "interrupted"]
+    assert len((tmp_path / "s" / "audit.jsonl").read_text().splitlines()) == 3
+
+    result = loop.run("still there?", session)
+    assert result.text == "Recovered."
+    assert [m.role for m in session.messages] == ["user", "assistant", "user", "assistant"]
+
+
+def test_unserializable_result_is_an_internal_error(env):
+    *_, context = env
+
+    class Args(ToolInput):
+        pass
+
+    def loop_back(args, ctx):
+        data = []
+        data.append(data)
+        return data
+
+    tools = ToolRegistry([Tool("circular", "x", Args, loop_back)])
+    provider = FakeProvider.scripted(tool_call("circular", "c1"), "ok")
+    session = Session()
+    AgentLoop(provider, tools, context).run("hi", session)
+    payload, is_error = result_of(session, 0)
+    assert is_error and payload["error"]["type"] == "internal_error"
+    assert session.tool_calls[0].status == "internal_error"
+
+
+def test_empty_answer_is_never_stored_as_an_empty_turn(env):
+    *_, context = env
+    provider = FakeProvider.scripted("   ")
+    session = Session()
+    result = loop_for(provider, context).run("hi", session)
+    assert result.text == EMPTY_ANSWER
+    assert session.messages[-1].content == EMPTY_ANSWER
+
+
+def test_run_pipeline_refuses_a_command_that_changed_after_approval(env):
+    domains, workspace, engine, _ = env
+
+    class DriftingEngine(FakeEngine):
+        calls = 0
+
+        def build_command(self, spec):
+            DriftingEngine.calls += 1
+            return [*super().build_command(spec), f"--drift{DriftingEngine.calls}"]
+
+    drifting = DriftingEngine()
+    context = ToolContext(domains=domains, workspace=workspace, engine=drifting)
+    provider = FakeProvider.scripted(tool_call("run_pipeline", "c1", **RUN_ARGS), "ok")
+    session = Session()
+    loop_for(provider, context, confirmation=AllowAll()).run("run", session)
+    payload, _ = result_of(session, 0)
+    assert payload["error"]["type"] == "plan_changed"
+    assert drifting.runs == [] and session.tool_calls[0].confirmation == "approved"
+
+
+def test_run_pipeline_called_directly_without_approval_refuses(env):
+    *_, engine, context = env
+    with pytest.raises(ToolError) as info:
+        run_pipeline(RunArgs(**RUN_ARGS), context)
+    assert info.value.kind == "not_confirmed" and engine.runs == []
+
+
 def test_status_tools_need_a_workspace_and_a_known_run(env):
     domains, *_ = env
     context = ToolContext(domains=domains)
@@ -467,6 +603,12 @@ def test_llm_router_falls_back_to_keywords(reply, why):
     decision = LLMRouter(provider).route("Leishmania VCF please", two_domains())
     assert decision.domain == "genomics"
     assert decision.reason.startswith(why) and "keyword fallback" in decision.reason
+
+
+def test_llm_router_missing_confidence_is_neutral():
+    reply = tool_call("choose_domain", "r1", domain="genomics", reason="variants")
+    decision = LLMRouter(FakeProvider.scripted(reply)).route("x", two_domains())
+    assert decision.domain == "genomics" and decision.confidence == 0.5
 
 
 def test_llm_router_without_domains_does_not_call_the_model():

@@ -51,6 +51,8 @@ class ToolContext:
     workspace: Workspace | None = None
     engine: WorkflowEngine | None = None
     session: Session | None = None
+    approved_plan: dict[str, Any] | None = None
+    """Set by the runtime for a confirmed tool: the preview the user approved."""
     extra: dict[str, Any] = field(default_factory=dict)
     """Room for domain-specific services, keyed by name."""
 

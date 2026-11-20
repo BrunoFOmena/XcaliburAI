@@ -7,7 +7,9 @@ Safety properties the loop guarantees:
 * a tool that requires confirmation runs only after the policy approves its preview;
 * failures come back to the model as structured results, so it can correct itself;
 * the loop stops after ``max_steps`` model calls and says why;
-* every tool call is recorded in the session for audit.
+* every tool call is recorded in the session for audit;
+* the history stays valid for the provider: every tool call gets a result, even when
+  execution is interrupted, and an empty answer is never stored as an empty turn.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from xcalibur.llm.errors import LLMError
 
 StopReason = Literal["completed", "max_steps", "llm_error"]
 
+EMPTY_ANSWER = "(The model returned an empty answer.)"
 DEFAULT_MAX_STEPS = 8
 DEFAULT_MAX_RESULT_CHARS = 8000
 
@@ -107,18 +110,19 @@ class AgentLoop:
                 )
             last_text = completion.text
             calls = tuple(completion.tool_calls)
-            session.messages.append(
-                Message(role="assistant", content=completion.text, tool_calls=calls)
-            )
             if not calls:
+                text = completion.text if completion.text.strip() else EMPTY_ANSWER
+                session.messages.append(Message(role="assistant", content=text))
                 return LoopResult(
-                    text=completion.text,
+                    text=text,
                     stop_reason="completed",
                     steps=step,
                     tool_calls=session.tool_calls[first_record:],
                 )
-            results = tuple(self._execute(step, call, context, session) for call in calls)
-            session.messages.append(Message(role="user", tool_results=results))
+            session.messages.append(
+                Message(role="assistant", content=completion.text, tool_calls=calls)
+            )
+            self._run_calls(step, calls, context, session)
 
         note = (
             f"Stopped after {self.max_steps} steps (the configured limit) before the "
@@ -133,12 +137,34 @@ class AgentLoop:
 
     # -- tool execution ---------------------------------------------------------------
 
+    def _run_calls(
+        self, step: int, calls: tuple[ToolCall, ...], context: ToolContext, session: Session
+    ) -> None:
+        """Run the calls and append their results; on any interruption (Ctrl+C, a failing
+        audit write) the unfinished calls still get an error result before re-raising, so
+        the history never holds a tool call without its result."""
+        results: list[ToolResult] = []
+        try:
+            for call in calls:
+                results.append(self._execute(step, call, context, session))
+        finally:
+            pending = calls[len(results):]
+            for call in pending:
+                payload = _error(
+                    "interrupted", "The tool call was interrupted and returned no result."
+                )
+                results.append(ToolResult(call.id, _serialize(payload), is_error=True))
+            session.messages.append(Message(role="user", tool_results=tuple(results)))
+            for call in pending:
+                _record_quietly(session, step, call, "interrupted")
+
     def _execute(
         self, step: int, call: ToolCall, context: ToolContext, session: Session
     ) -> ToolResult:
         started = now()
         confirmation: Literal["approved", "declined"] | None = None
         status: ToolCallStatus
+        call_context = context
         try:
             tool = self._tool(call.name)
             args = _validate(tool, call.input)
@@ -151,7 +177,9 @@ class AgentLoop:
                         kind="confirmation_declined",
                         plan=plan,
                     )
-            payload: Any = {"result": tool.func(args, context)}
+                # The tool can check that what it runs is exactly what was approved.
+                call_context = replace(context, approved_plan=plan)
+            payload: Any = {"result": tool.func(args, call_context)}
             status = "ok"
         except _UnknownTool as exc:
             status, payload = "unknown_tool", _error("unknown_tool", str(exc), available=exc.names)
@@ -166,7 +194,11 @@ class AgentLoop:
             status = "internal_error"
             payload = _error("internal_error", f"{type(exc).__name__}: {exc}")
 
-        text = _serialize(payload)
+        try:
+            text = _serialize(payload)
+        except ValueError as exc:  # e.g. a circular structure returned by a tool
+            status = "internal_error"
+            text = _serialize(_error("internal_error", f"Result is not serializable: {exc}"))
         content, truncated, saved = self._bounded(step, call.id, text, session)
         session.record(
             ToolCallRecord(
@@ -213,14 +245,21 @@ class AgentLoop:
         if len(text) <= self.max_result_chars:
             return text, False, None
         saved = session.save_result(step, call_id, text)
-        head = text[: self.max_result_chars - 200]
-        note = {
-            "truncated": True,
-            "total_chars": len(text),
-            "full_result_path": None if saved is None else str(saved),
-            "preview": head,
-        }
-        return _serialize(note), True, saved
+        keep = self.max_result_chars
+        while True:
+            note = _serialize(
+                {
+                    "truncated": True,
+                    "total_chars": len(text),
+                    "full_result_path": None if saved is None else str(saved),
+                    "preview": text[:keep],
+                }
+            )
+            # Escaping can make the note longer than the preview; shrink until it fits.
+            excess = len(note) - self.max_result_chars
+            if excess <= 0 or keep == 0:
+                return note, True, saved
+            keep = max(0, keep - max(excess, 1))
 
 
 class LLMAgent:
@@ -290,6 +329,27 @@ def _validate(tool: Tool, arguments: Any) -> BaseModel:
             {"loc": list(e["loc"]), "msg": e["msg"], "type": e["type"]} for e in exc.errors()
         ]
         raise _InvalidArguments(errors) from None
+
+
+def _record_quietly(session: Session, step: int, call: ToolCall, status: ToolCallStatus) -> None:
+    """Best-effort audit entry while an interruption is already propagating."""
+    last = session.tool_calls[-1] if session.tool_calls else None
+    if last is not None and last.step == step and last.call_id == call.id:
+        return  # already recorded in memory; only writing the audit file failed
+    stamp = now()
+    entry = ToolCallRecord(
+        step=step,
+        call_id=call.id,
+        tool=call.name,
+        arguments=dict(call.input),
+        status=status,
+        started_at=stamp,
+        finished_at=stamp,
+    )
+    try:
+        session.record(entry)  # keeps the entry in memory even if the file write fails
+    except OSError:
+        pass
 
 
 def _add_user_text(session: Session, text: str) -> None:
