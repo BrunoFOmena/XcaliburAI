@@ -20,7 +20,7 @@ packages/xcalibur-<domain>/
 echolas = "xcalibur_echolas:plugin"
 ```
 
-`plugin()` returns a `DomainPlugin(manifest, root, agents)`.
+`plugin()` returns a `DomainPlugin(manifest, root, agents, tools)`. `tools` is optional: domain tools follow the contract in [AGENT_RUNTIME.md](AGENT_RUNTIME.md) and agents see them as `<domain>__<tool>`.
 
 ## Manifest (schema_version 1)
 

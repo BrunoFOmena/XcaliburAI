@@ -12,6 +12,7 @@ from importlib.metadata import entry_points
 from pathlib import Path
 
 from xcalibur.agents.base import AgentSpec
+from xcalibur.agents.tools import Tool
 from xcalibur.manifest import DomainManifest
 
 ENTRY_POINT_GROUP = "xcalibur.domains"
@@ -25,6 +26,8 @@ class DomainPlugin:
     root: Path
     """Package directory; the manifest's workflow entrypoint resolves against it."""
     agents: tuple[AgentSpec, ...] = field(default_factory=tuple)
+    tools: tuple[Tool, ...] = field(default_factory=tuple)
+    """Domain tools; agents see them as ``<domain>__<tool>``."""
 
     @property
     def name(self) -> str:

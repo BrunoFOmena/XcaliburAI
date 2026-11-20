@@ -5,6 +5,7 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 ## [Unreleased]
 
 ### Added
+- Agent runtime (#8): `AgentLoop` with tool calling, a step limit with a stated stop reason, tool errors returned to the model as structured results, long results truncated and saved to a file, and every tool call recorded in the session (`audit.jsonl` when the session has a directory). Typed tools (`Tool`, Pydantic input models that reject unknown arguments) and a `ToolRegistry`; core tools `list_domains`, `describe_domain`, `plan_run`, `run_pipeline`, `get_run_status` and `read_results`; domains contribute tools through `DomainPlugin.tools`. `run_pipeline` runs only after the confirmation policy approves the exact command (denied by default). `LLMRouter` with fallback to the `KeywordRouter`. `FakeProvider` for tests without network. Contract documented in `docs/AGENT_RUNTIME.md`.
 - Anthropic LLM provider (optional extra `xcalibur-ai[anthropic]`, official SDK `anthropic>=2.11,<3`): system prompt, tool calls and streaming in the `LLMProvider` interface, bounded retries, clear auth/limit/network errors without the key, refusal handling with server-side fallback (#7).
 - `xcalibur init` (interactive or `--non-interactive`) saves the provider, model and the NAME of the key variable to `xcalibur.yaml`; `xcalibur check-llm` tests the connection (#7).
 - ECHOLAS pipeline imported into `xcalibur-echolas` (`main.nf`, 5 modules, scripts, `nextflow.config`) with its MIT notice. Input directories are now the `raw_data` and `reference` params.
@@ -14,6 +15,7 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 - Issue template following the project standard, and the issue title-prefix convention in `CONTRIBUTING.md`.
 
 ### Changed
+- `Message` carries tool calls (assistant) and tool results (user), sent to Anthropic as `tool_use`/`tool_result` blocks; `AgentSpec` gains `instructions` and `tools`; `RunRecord.filename_for` is public (#8).
 - Every PR (work and promotion) is merged with a merge commit; squash and rebase merges are no longer used (#35).
 - Promotion flow: `main` now receives a PR directly from `homolog`, merged with a merge commit; the `promote/*` branches and the cherry-pick `-x` requirement are gone. The `branch-policy` check enforces it (#26).
 - `run_id` is validated (`^[A-Za-z0-9_-]+$`) in `RunSpec`, `RunRecord` and `Workspace.run_dir`; invalid ids raise `ValueError` before touching the disk (#21).

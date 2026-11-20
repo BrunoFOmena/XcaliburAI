@@ -14,6 +14,10 @@ class AgentSpec:
     role: str
     """One of: qc, execution, interpretation, acquisition, reporting, custom."""
     description: str = ""
+    instructions: str = ""
+    """Extra system-prompt text for this agent (appended to the runtime's default)."""
+    tools: tuple[str, ...] = ()
+    """Names of the tools this agent may use; empty means every registered tool."""
 
 
 @dataclass

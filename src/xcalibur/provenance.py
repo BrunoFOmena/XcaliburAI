@@ -39,7 +39,7 @@ class RunRecord(BaseModel):
     @property
     def filename(self) -> str:
         """First attempt: ``run-<id>.json``; later ones: ``run-<id>.attempt-<n>.json``."""
-        return self._name(self.run_id, self.attempt)
+        return self.filename_for(self.run_id, self.attempt)
 
     @staticmethod
     def next_attempt(directory: Path, run_id: str) -> int:
@@ -47,12 +47,12 @@ class RunRecord(BaseModel):
         validate_run_id(run_id)
         existing = {p.name for p in directory.glob(f"run-{run_id}*.json")}
         attempt = 1
-        while RunRecord._name(run_id, attempt) in existing:
+        while RunRecord.filename_for(run_id, attempt) in existing:
             attempt += 1
         return attempt
 
     @staticmethod
-    def _name(run_id: str, attempt: int) -> str:
+    def filename_for(run_id: str, attempt: int) -> str:
         if attempt == 1:
             return f"run-{run_id}.json"
         return f"run-{run_id}.attempt-{attempt}.json"
