@@ -1,14 +1,34 @@
-"""Command-line entry point (skeleton)."""
+"""Command-line entry point.
+
+Exit codes: 0 success, 1 execution failure (or an unexpected error), 2 wrong usage or
+invalid parameters, 130 interrupted. Errors are printed as one line, never as a traceback
+(set ``XCALIBUR_DEBUG=1`` to see it).
+"""
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
-import shlex
 import sys
+from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
+from pydantic import ValidationError
+
+from xcalibur.agents.core_tools import (
+    RunArgs,
+    RunIdArgs,
+    plan_run,
+    preview_run,
+    read_results,
+    run_pipeline,
+)
+from xcalibur.agents.tools import ToolContext, ToolError
+from xcalibur.chat import ChatApp
 from xcalibur.config import (
+    ConfigLocation,
     check_workspace_settings,
     load_llm_config,
     locate_config,
@@ -17,37 +37,99 @@ from xcalibur.config import (
     validate_env_name,
     workspace_config_path,
 )
-from xcalibur.execution.base import RunSpec
 from xcalibur.execution.nextflow import NextflowEngine
 from xcalibur.llm import DEFAULT_KEY_ENVS, SUGGESTED_MODELS, SUPPORTED_PROVIDERS, create_provider
 from xcalibur.llm.base import Message, ProviderConfig
 from xcalibur.llm.errors import LLMAuthError, LLMConfigError, LLMError
-from xcalibur.manifest import ManifestError
 from xcalibur.registry import DomainRegistry
+from xcalibur.terminal import FollowingEngine, Style, color_enabled, stderr_printer
 from xcalibur.version import __version__
+from xcalibur.workspace import Workspace
+
+EXIT_OK, EXIT_FAILED, EXIT_USAGE, EXIT_INTERRUPTED = 0, 1, 2, 130
+
+# Tool errors caused by the request (exit 2); anything else is an execution failure (exit 1).
+USAGE_ERRORS = {"invalid_params", "invalid_inputs", "unknown_domain", "run_exists", "no_workspace"}
 
 
-def _parse_kv(items: list[str]) -> dict[str, str]:
+class UsageError(Exception):
+    """Wrong arguments: reported in one line with exit code 2."""
+
+
+def _parse_kv(items: list[str], what: str = "KEY=VALUE") -> dict[str, str]:
     out: dict[str, str] = {}
     for item in items:
         key, sep, value = item.partition("=")
-        if not sep:
-            raise SystemExit(f"expected KEY=VALUE, got {item!r}")
+        if not sep or not key:
+            raise UsageError(f"expected {what}, got {item!r}")
         out[key] = value
     return out
 
 
+def _discover() -> DomainRegistry:
+    return DomainRegistry.discover()
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="xcalibur", description="XcaliburAI")
-    sub = parser.add_subparsers(dest="command")
+    parser = argparse.ArgumentParser(
+        prog="xcalibur",
+        description="XcaliburAI: AI agents over workflow engines for genomics.",
+        epilog="Exit codes: 0 success, 1 execution failure, 2 wrong usage or invalid "
+        "parameters, 130 interrupted. Run 'xcalibur <command> -h' for a command's options.",
+    )
+    sub = parser.add_subparsers(dest="command", metavar="<command>")
 
     sub.add_parser("version", help="print the version")
     sub.add_parser("domains", help="list installed domain packages")
 
-    plan = sub.add_parser("plan", help="validate parameters and show the workflow command")
-    plan.add_argument("domain")
-    plan.add_argument("-p", "--param", action="append", default=[], metavar="KEY=VALUE")
-    plan.add_argument("-i", "--input", action="append", default=[], metavar="NAME=PATH")
+    output = argparse.ArgumentParser(add_help=False)
+    output.add_argument("--json", action="store_true", help="print results as JSON on stdout")
+    output.add_argument("--no-color", action="store_true", help="plain output (also NO_COLOR=1)")
+
+    request = argparse.ArgumentParser(add_help=False)
+    request.add_argument("domain", help="domain name, as 'xcalibur domains' lists it")
+    request.add_argument("-p", "--param", action="append", default=[], metavar="KEY=VALUE")
+    request.add_argument("-i", "--input", action="append", default=[], metavar="NAME=PATH")
+    request.add_argument("--run-id", help="run identifier (letters, digits, '_', '-')")
+    request.add_argument(
+        "--workspace", type=Path, default=None, help="workspace directory (default: current)"
+    )
+    request.add_argument(
+        "--nextflow", default="nextflow", metavar="PATH", help="Nextflow executable"
+    )
+
+    sub.add_parser(
+        "plan",
+        parents=[request, output],
+        help="validate parameters and show the workflow command (nothing runs)",
+    )
+
+    run = sub.add_parser(
+        "run",
+        parents=[request, output],
+        help="validate and run a domain's workflow, without the LLM",
+        description="Validate the parameters and inputs, run the workflow and record its "
+        "provenance in <workspace>/runs/<run_id>/. Progress is streamed to stderr.",
+    )
+    run.add_argument("--resume", action="store_true", help="resume an earlier run (--run-id)")
+    run.add_argument("--dry-run", action="store_true", help="only plan, like 'xcalibur plan'")
+
+    chat = sub.add_parser(
+        "chat",
+        parents=[output],
+        help="talk to the assistant; it plans and runs workflows after you confirm",
+        description="Interactive session with the assistant. Session commands: /help, "
+        "/status, /runs, /exit.",
+    )
+    chat.add_argument("--config", type=Path, help="LLM configuration file")
+    chat.add_argument(
+        "--workspace", type=Path, default=None, help="workspace directory (default: current)"
+    )
+    chat.add_argument(
+        "--yes", action="store_true", help="run without asking for confirmation (automation)"
+    )
+    chat.add_argument("--max-steps", type=int, help="model calls per answer (default 8)")
+    chat.add_argument("--nextflow", default="nextflow", metavar="PATH", help="Nextflow executable")
 
     init = sub.add_parser(
         "init", help="configure the LLM provider (the key stays in the environment)"
@@ -173,35 +255,205 @@ def _cmd_check(args: argparse.Namespace) -> int:
     return _check(config)
 
 
+# -- plan / run ------------------------------------------------------------------------
+
+
+def _cmd_run(args: argparse.Namespace, dry_run: bool) -> int:
+    err_style = Style(color_enabled(sys.stderr, args.no_color))
+    out_style = Style(color_enabled(sys.stdout, args.no_color) and not args.json)
+    fields: dict[str, Any] = {
+        "domain": args.domain,
+        "params": _parse_kv(args.param),
+        "inputs": _parse_kv(args.input, "NAME=PATH"),
+        "resume": getattr(args, "resume", False),
+    }
+    if args.run_id is not None:
+        fields["run_id"] = args.run_id
+    elif fields["resume"]:
+        raise UsageError("--resume needs the --run-id of the run to resume")
+    try:
+        request = RunArgs(**fields)
+    except ValidationError as exc:
+        problems = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors())
+        return _report_error(args, "invalid_arguments", problems, EXIT_USAGE)
+
+    workspace = Workspace((args.workspace or Path.cwd()).absolute())
+    engine = FollowingEngine(NextflowEngine(args.nextflow), stderr_printer(err_style))
+    ctx = ToolContext(domains=_discover(), workspace=workspace, engine=engine)
+
+    if dry_run:
+        try:
+            plan = plan_run(request, ctx)
+        except ToolError as exc:
+            return _tool_failure(args, exc)
+        if args.json:
+            _print_json({"status": "planned", **plan})
+        else:
+            print(plan["command_text"])
+        return EXIT_OK
+
+    try:
+        plan = preview_run(request, ctx)
+    except ToolError as exc:
+        return _tool_failure(args, exc)
+    print(
+        err_style("brand", f"Running {plan['domain']} · run {plan['run_id']}")
+        + err_style("dim", f"\n  {plan['command_text']}"),
+        file=sys.stderr,
+        flush=True,
+    )
+    workspace.ensure()
+    try:
+        result = run_pipeline(request, replace(ctx, approved_plan=plan))
+    except ToolError as exc:
+        return _tool_failure(args, exc)
+    try:
+        outputs = read_results(RunIdArgs(run_id=result["run_id"]), ctx)
+    except ToolError:
+        outputs = None
+
+    code = EXIT_OK if result["status"] == "succeeded" else EXIT_FAILED
+    if args.json:
+        payload = {"domain": plan["domain"], **result}
+        if outputs is not None:
+            payload["outputs"] = outputs["outputs"]
+            payload["missing_outputs"] = outputs["missing_outputs"]
+        _print_json(payload)
+        return code
+    _print_run(result, outputs, out_style)
+    return code
+
+
+def _print_run(result: dict[str, Any], outputs: dict[str, Any] | None, style: Style) -> None:
+    ok = result["status"] == "succeeded"
+    mark = style("ok", "✓") if ok else style("error", "✗")
+    code = "" if result["returncode"] is None else f" (exit {result['returncode']})"
+    print(f"{mark} run {result['run_id']} {result['status']}{code}")
+    print(f"  run dir  {result['run_dir']}")
+    print(f"  log      {result['log_path']}")
+    print(f"  record   {result['record_path']}")
+    if outputs is None:
+        return
+    for output in outputs["outputs"]:
+        for item in output["files"]:
+            print(f"  {style('accent', output['name'])}  {item['path']}")
+    if ok and outputs["missing_outputs"]:
+        missing = ", ".join(outputs["missing_outputs"])
+        print(style("warn", f"  missing declared outputs: {missing}"))
+
+
+def _tool_failure(args: argparse.Namespace, exc: ToolError) -> int:
+    code = EXIT_USAGE if exc.kind in USAGE_ERRORS else EXIT_FAILED
+    return _report_error(args, exc.kind, str(exc), code)
+
+
+def _report_error(args: argparse.Namespace, kind: str, message: str, code: int) -> int:
+    if getattr(args, "json", False):
+        _print_json({"status": "error", "error": {"type": kind, "message": message}})
+    style = Style(color_enabled(sys.stderr, getattr(args, "no_color", False)))
+    print(style("error", f"error: {message}"), file=sys.stderr)
+    return code
+
+
+def _print_json(payload: dict[str, Any]) -> None:
+    print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+
+
+# -- chat ---------------------------------------------------------------------------------
+
+
+def _chat_config(args: argparse.Namespace, workspace: Path) -> ConfigLocation:
+    """--config, else <workspace>/xcalibur.yaml if present, else the user configuration."""
+    if args.config is not None:
+        return ConfigLocation(args.config, trusted=True)
+    local = workspace_config_path(workspace)
+    if local.exists():
+        return ConfigLocation(local, trusted=False)
+    return ConfigLocation(user_config_path(), trusted=True)
+
+
+def _cmd_chat(args: argparse.Namespace) -> int:
+    if args.max_steps is not None and args.max_steps < 1:
+        raise UsageError("--max-steps must be at least 1")
+    root = (args.workspace or Path.cwd()).absolute()
+    try:
+        config = load_llm_config(_chat_config(args, root))
+        provider = create_provider(config)
+        # Fail now, not at the first message, when the SDK or the key is missing
+        # (building the client checks both without any network call).
+        getattr(provider, "client", None)
+    except LLMConfigError as exc:
+        return _report_error(args, "llm_config", str(exc), EXIT_USAGE)
+    err_style = Style(color_enabled(sys.stderr, args.no_color))
+    app = ChatApp(
+        provider=provider,
+        domains=_discover(),
+        workspace=Workspace(root),
+        engine=FollowingEngine(NextflowEngine(args.nextflow), stderr_printer(err_style)),
+        style=Style(color_enabled(sys.stdout, args.no_color) and not args.json),
+        auto_confirm=args.yes,
+        json_mode=args.json,
+        max_steps=args.max_steps,
+    )
+    _enable_line_editing()
+    return app.run()
+
+
+def _enable_line_editing() -> None:
+    """Arrow keys and line history at the prompt, where the platform has readline."""
+    try:
+        import readline  # noqa: F401
+    except ImportError:
+        pass
+
+
+# -- entry point --------------------------------------------------------------------------
+
+
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return _main(argv)
+    except UsageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    except KeyboardInterrupt:
+        print("\ninterrupted", file=sys.stderr)
+        return EXIT_INTERRUPTED
+    except Exception as exc:  # noqa: BLE001 - the end user never sees a traceback
+        if os.environ.get("XCALIBUR_DEBUG"):
+            raise
+        print(
+            f"error: {type(exc).__name__}: {exc} (set XCALIBUR_DEBUG=1 for the traceback)",
+            file=sys.stderr,
+        )
+        return EXIT_FAILED
+
+
+def _main(argv: list[str] | None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.command == "version":
         print(__version__)
-        return 0
+        return EXIT_OK
 
     if args.command == "domains":
-        registry = DomainRegistry.discover()
+        registry = _discover()
         if not len(registry):
             print("no domain packages installed")
-            return 0
+            return EXIT_OK
         for plugin in registry:
             manifest = plugin.manifest
             print(f"{manifest.name}\t{manifest.version}\t{manifest.display_name}")
-        return 0
+        return EXIT_OK
 
     if args.command == "plan":
-        registry = DomainRegistry.discover()
-        try:
-            plugin = registry.get(args.domain)
-            params = plugin.manifest.resolve_params(_parse_kv(args.param))
-        except (KeyError, ManifestError) as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 2
-        inputs = {k: Path(v) for k, v in _parse_kv(args.input).items()}
-        spec = RunSpec(plugin=plugin, params=params, inputs=inputs, dry_run=True)
-        print(shlex.join(NextflowEngine().build_command(spec)))
-        return 0
+        return _cmd_run(args, dry_run=True)
+
+    if args.command == "run":
+        return _cmd_run(args, dry_run=args.dry_run)
+
+    if args.command == "chat":
+        return _cmd_chat(args)
 
     if args.command == "init":
         return _cmd_init(args)
@@ -210,7 +462,7 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_check(args)
 
     build_parser().print_help()
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":
