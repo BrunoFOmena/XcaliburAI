@@ -61,14 +61,35 @@ A workspace file cannot set `base_url` nor a key variable other than the standar
 # CLI Reference
 
 ```bash
-xcalibur version                         # print the version
-xcalibur domains                         # list installed domain packages
-xcalibur plan <domain> -p KEY=VALUE      # validate params and show the workflow command
-                      -i NAME=PATH       #   (dry run; nothing is executed)
-xcalibur init [--non-interactive]        # configure the LLM provider (no secrets saved)
-xcalibur check-llm                       # test the configured provider
+xcalibur                                  # show help (also: xcalibur <command> -h)
+xcalibur version                          # print the version
+xcalibur domains                          # list installed domain packages
+xcalibur init [--non-interactive]         # configure the LLM provider (no secrets saved)
+xcalibur check-llm                        # test the configured provider
+
+xcalibur chat [--workspace DIR] [--yes] [--json]
+                                          # talk to the assistant; it plans, asks, runs, explains
+xcalibur run <domain> -p KEY=VALUE -i NAME=PATH [--run-id ID] [--resume] [--json]
+                                          # validate and run without the LLM, with provenance
+xcalibur run <domain> ... --dry-run       # only plan (same as: xcalibur plan <domain> ...)
+xcalibur plan <domain> -p KEY=VALUE -i NAME=PATH
+                                          # validate and show the exact command; nothing runs
 ```
-Chat (`xcalibur chat`) and `xcalibur run` arrive with the agent layer.
+
+**`xcalibur chat`** opens a session with the configured LLM (`xcalibur init` first). The assistant uses tools to list domains, plan a run and read results. Before anything runs it shows the domain, every parameter, the inputs, the run directory and the exact command, and asks `Run it? [y/N]`; the default is always to ask, and only `--yes` (for automation) skips the question. Session commands: `/help`, `/status` (provider, model, workspace, what this session did), `/runs` (runs in the workspace and their status), `/exit` (or Ctrl+D). Ctrl+C stops the current answer and keeps the session. Every tool call is recorded in `<workspace>/sessions/<id>/audit.jsonl`. With `--json`, each answer is printed as one JSON object per line (prompts go to stderr). `--max-steps N` limits model calls per answer. The conversation is not saved for later resumption yet.
+
+**`xcalibur run`** is the deterministic path for scripts and CI: no LLM, the same validation the assistant uses, and provenance in `<workspace>/runs/<run_id>/` (`run-<id>.json`, `nextflow.log`, `nextflow_report.html`). The workflow log is streamed to stderr while it runs; the result goes to stdout. `--json` prints `run_id`, `status`, `returncode`, `command`, `run_dir`, `log_path`, `record_path` and the files found for each declared output. An existing `--run-id` is refused unless `--resume` is given.
+
+Common options: `--workspace DIR` (default: the current directory), `--nextflow PATH` (the Nextflow executable), `--no-color` (or `NO_COLOR=1`; colour is also off when the output is not a terminal).
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Success |
+| `1` | The run failed or was cancelled, Nextflow is missing, or an unexpected error |
+| `2` | Wrong usage or invalid parameters/inputs (nothing ran) |
+| `130` | Interrupted (Ctrl+C) |
+
+Errors are one line on stderr, never a traceback (`XCALIBUR_DEBUG=1` shows it).
 
 <br/>
 

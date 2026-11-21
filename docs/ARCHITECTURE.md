@@ -65,7 +65,7 @@ Provenance record  +  Interpretation agents ──▶ report
 
 ## Not built yet
 
-Other LLM providers (OpenAI, Gemini, Ollama), long-term memory and session persistence, `xcalibur chat` / `run`, Docker/HPC/cloud execution profiles, the data-acquisition agent, and report generation.
+Other LLM providers (OpenAI, Gemini, Ollama), long-term memory and session persistence (resuming a chat), shell completion, Docker/HPC/cloud execution profiles, the data-acquisition agent, and report generation.
 
 ## Prior art
 
