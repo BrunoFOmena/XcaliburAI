@@ -26,7 +26,8 @@ MAX_FILES_PER_OUTPUT = 50
 LOG_TAIL_LINES = 20
 
 ParamValue = str | int | float | bool
-PROFILE_PATTERN = r"^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$"
+# Profile names never start with "-", so a value cannot read as a Nextflow option.
+PROFILE_PATTERN = r"^[A-Za-z0-9_][A-Za-z0-9_-]*(,[A-Za-z0-9_][A-Za-z0-9_-]*)*$"
 
 
 class NoArgs(ToolInput):

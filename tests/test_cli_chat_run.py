@@ -239,6 +239,16 @@ def test_chat_plans_confirms_runs_and_interprets(env, chat, capsys):
     assert not provider.replies
 
 
+def test_chat_confirmation_shows_the_profile(env, chat, capsys):
+    replies = [tool_call("run_pipeline", **run_args(env), profile="test"), "Done."]
+    code, _, prompts = chat(replies, ["run it", "y"])
+    assert code == 0 and any("Run it?" in p for p in prompts)
+    out = capsys.readouterr().out
+    assert "profile  test" in out
+    record = json.loads((env["ws"] / "runs" / "c1" / "run-c1.json").read_text())
+    assert record["command"][record["command"].index("-profile") + 1] == "test"
+
+
 def test_chat_declined_confirmation_runs_nothing(env, chat, capsys):
     replies = [tool_call("run_pipeline", **run_args(env)), "Understood, nothing was run."]
     code, provider, _ = chat(replies, ["run it", "n"])
@@ -353,4 +363,6 @@ def test_profile_reaches_the_command_and_is_validated(env, capsys):
     plan = json.loads(capsys.readouterr().out)
     assert plan["profile"] == "test,docker"
     assert plan["command"][plan["command"].index("-profile") + 1] == "test,docker"
-    assert cli.main(["plan", "demo", "--profile", "x; rm -rf /"]) == 2
+    # "--profile=VALUE" so argparse hands even "-resume" to the profile validation.
+    for bad in ("x; rm -rf /", "-resume", "test,-x", "test,", ""):
+        assert cli.main(["plan", "demo", f"--profile={bad}"]) == 2, bad

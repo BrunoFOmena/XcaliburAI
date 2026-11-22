@@ -9,7 +9,8 @@ Not part of the default ``pytest`` run. Run it with ``pytest -m e2e`` (see CONTR
 
 Environment:
     XCALIBUR_E2E_REQUIRED=1   fail, instead of skip, when Nextflow or micromamba is missing
-    XCALIBUR_E2E_WORKDIR      keep the data and workspace there (the CI uploads it on failure)
+    XCALIBUR_E2E_WORKDIR      keep the data and workspace there (the CI uploads it on failure);
+                              must be new, empty or left by an earlier run of this test
     XCALIBUR_E2E_TIMEOUT      seconds before the run is stopped (default 900)
     NXF_CONDA_CACHEDIR        where Nextflow keeps the conda environments (cache it)
 """
@@ -36,11 +37,13 @@ pytestmark = pytest.mark.e2e
 
 DEFAULT_TIMEOUT = 900  # 15 minutes, the target of issue #11
 GRACE = 60  # seconds xcalibur gets to stop Nextflow after SIGTERM
+MARKER = ".xcalibur-e2e"  # marks a work directory this test may wipe
 
 
 @pytest.fixture(autouse=True)
 def _no_network():
-    """The pipeline needs the network to build its conda environments."""
+    """Lift the suite's network block: conda environments are downloaded. (The block only
+    patches this Python process; it is lifted so the intent is explicit.)"""
 
 
 def _require_tools() -> None:
@@ -59,9 +62,14 @@ def run(tmp_path_factory) -> dict:
     _require_tools()
     base = os.environ.get("XCALIBUR_E2E_WORKDIR")
     root = Path(base) if base else tmp_path_factory.mktemp("e2e")
-    if root.exists():
+    marker = root / MARKER
+    if root.exists() and any(root.iterdir()):
+        # Only a directory this test created earlier is wiped, never one picked by mistake.
+        if not marker.is_file():
+            pytest.fail(f"{root} is not empty and was not created by this test; pick another")
         shutil.rmtree(root)
-    root.mkdir(parents=True)
+    root.mkdir(parents=True, exist_ok=True)
+    marker.write_text("created by tests/e2e/test_echolas_e2e.py; safe to delete\n")
     data = root / "data"
     variants = synth.generate(data)
     workspace = root / "workspace"
@@ -83,6 +91,7 @@ def run(tmp_path_factory) -> dict:
                 proc.communicate(timeout=GRACE)
             except subprocess.TimeoutExpired:
                 proc.kill()
+                proc.wait()
             pytest.fail(f"pipeline did not finish within {timeout}s (see {root})")
 
     run_dir = workspace / "runs" / "smoke"
@@ -125,7 +134,8 @@ def test_run_succeeds_with_every_output(run):
     assert result["missing_outputs"] == [], run["log_tail"]
     record = json.loads(Path(result["record_path"]).read_text())
     assert record["status"] == "succeeded"
-    assert "-profile" in record["command"] and "test" in record["command"]
+    command = record["command"]
+    assert command[command.index("-profile") + 1] == "test"
 
 
 def test_auto_mode_picks_conservative_trimming(run):
