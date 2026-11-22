@@ -29,6 +29,8 @@ class RunSpec:
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     dry_run: bool = True
     resume: bool = False
+    profile: str | None = None
+    """Engine profile; overrides the manifest's ``workflow.profile`` when set."""
 
     def __post_init__(self) -> None:
         validate_run_id(self.run_id)

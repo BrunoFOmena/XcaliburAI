@@ -21,11 +21,9 @@ eigval <- scan(eigenval)
 pc1_var <- round(eigval[1] / sum(eigval) * 100, 1)
 pc2_var <- round(eigval[2] / sum(eigval) * 100, 1)
 
-# ler PCA
-pca <- read_table2(
-  eigenvec,
-  col_names = c("FID","IID","PC1","PC2","PC3","PC4","PC5","PC6","PC7")
-)
+# ler PCA (PLINK writes min(10, samples) PCs without a header; readr 2 dropped read_table2)
+pca <- read.table(eigenvec, header = FALSE, stringsAsFactors = FALSE)
+names(pca) <- c("FID", "IID", paste0("PC", seq_len(ncol(pca) - 2)))
 
 # plot
 p <- ggplot(pca, aes(x = PC1, y = PC2, label = IID)) +

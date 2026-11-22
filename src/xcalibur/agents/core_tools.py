@@ -26,6 +26,7 @@ MAX_FILES_PER_OUTPUT = 50
 LOG_TAIL_LINES = 20
 
 ParamValue = str | int | float | bool
+PROFILE_PATTERN = r"^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$"
 
 
 class NoArgs(ToolInput):
@@ -52,6 +53,12 @@ class RunArgs(ToolInput):
         description="Run identifier; leave empty to generate one.",
     )
     resume: bool = Field(default=False, description="Resume an earlier run with the same id.")
+    profile: str | None = Field(
+        default=None,
+        pattern=PROFILE_PATTERN,
+        max_length=64,
+        description="Workflow engine profile(s), comma-separated; leave empty for the default.",
+    )
 
 
 class RunIdArgs(ToolInput):
@@ -318,6 +325,7 @@ def _spec(args: RunArgs, ctx: ToolContext, dry_run: bool) -> RunSpec:
         run_id=args.run_id,
         dry_run=dry_run,
         resume=args.resume,
+        profile=args.profile,
     )
 
 
@@ -337,6 +345,7 @@ def _describe(spec: RunSpec, engine: WorkflowEngine) -> dict[str, Any]:
         "params": spec.params,
         "inputs": {k: str(v) for k, v in spec.inputs.items()},
         "resume": spec.resume,
+        "profile": spec.profile or spec.plugin.manifest.workflow.profile,
         "engine": engine.name,
         "command": command,
         "command_text": shlex.join(command),

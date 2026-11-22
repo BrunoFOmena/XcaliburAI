@@ -345,3 +345,12 @@ def test_log_follower_streams_new_lines(tmp_path):
         time.sleep(0.01)
     follower.stop()
     assert seen == ["step 1", "step 2", "partial"]
+
+
+def test_profile_reaches_the_command_and_is_validated(env, capsys):
+    assert cli.main(["plan", "demo", "-i", f"reads={env['reads']}", "--profile", "test,docker",
+                     "--json"]) == 0  # fmt: skip
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["profile"] == "test,docker"
+    assert plan["command"][plan["command"].index("-profile") + 1] == "test,docker"
+    assert cli.main(["plan", "demo", "--profile", "x; rm -rf /"]) == 2

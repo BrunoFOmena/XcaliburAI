@@ -215,3 +215,12 @@ def test_record_inputs_are_absolute_and_stdin_is_closed(tmp_path, monkeypatch):
     result = NextflowEngine(fake_nextflow(tmp_path)).run(s)
     inputs = json.loads(result.record_path.read_text())["inputs"]
     assert inputs == {"reads": str(tmp_path / "data" / "r.fq")}
+
+
+def test_profile_overrides_the_manifest_default(tmp_path):
+    plugin = make_plugin()
+    plugin.manifest.workflow.profile = "standard"
+    base = {"plugin": plugin, "params": {}}
+    assert NextflowEngine().build_command(RunSpec(**base))[3:5] == ["-profile", "standard"]
+    cmd = NextflowEngine().build_command(RunSpec(**base, profile="test"))
+    assert cmd[3:5] == ["-profile", "test"] and "standard" not in cmd
