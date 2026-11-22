@@ -97,6 +97,11 @@ def build_parser() -> argparse.ArgumentParser:
     request.add_argument(
         "--nextflow", default="nextflow", metavar="PATH", help="Nextflow executable"
     )
+    request.add_argument(
+        "--profile",
+        metavar="NAME",
+        help="workflow profile(s), comma-separated (overrides the domain's default)",
+    )
 
     sub.add_parser(
         "plan",
@@ -267,6 +272,8 @@ def _cmd_run(args: argparse.Namespace, dry_run: bool) -> int:
         "inputs": _parse_kv(args.input, "NAME=PATH"),
         "resume": getattr(args, "resume", False),
     }
+    if args.profile is not None:
+        fields["profile"] = args.profile
     if args.run_id is not None:
         fields["run_id"] = args.run_id
     elif fields["resume"]:

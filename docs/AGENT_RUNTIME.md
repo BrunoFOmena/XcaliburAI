@@ -98,7 +98,7 @@ The model is also instructed to call `plan_run` and explain the plan (domain, pa
 |---|---|---|
 | `list_domains` | none | Installed domains (name, display name, version, description) |
 | `describe_domain` | `domain` | Inputs, parameters (types, defaults, choices, limits), outputs and agents |
-| `plan_run` | `domain`, `params`, `inputs`, `run_id?`, `resume?` | Validates against the manifest and returns the exact command; runs nothing |
+| `plan_run` | `domain`, `params`, `inputs`, `run_id?`, `resume?`, `profile?` | Validates against the manifest and returns the exact command; runs nothing |
 | `run_pipeline` | same as `plan_run` | Needs confirmation; checks that input paths exist and that `run_id` is new (unless `resume`), then runs in the workspace |
 | `get_run_status` | `run_id` | Latest attempt's status, return code, command and the last log lines |
 | `read_results` | `run_id` | Files matching each output declared in the manifest, with sizes |

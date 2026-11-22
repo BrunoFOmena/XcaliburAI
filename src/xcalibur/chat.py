@@ -144,6 +144,8 @@ class ChatApp:
                          ("  (resume)" if d.get("resume") else ""))
         if d.get("run_dir"):
             lines.append(f"  {s('accent', 'run dir')}  {d['run_dir']}")
+        if d.get("profile"):
+            lines.append(f"  {s('accent', 'profile')}  {d['profile']}")
         lines.append(f"  {s('accent', 'command')}  {request.summary}")
         return "\n".join(lines)
 
