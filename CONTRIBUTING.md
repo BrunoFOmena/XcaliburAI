@@ -76,6 +76,25 @@ pip install -e ".[dev]" -e packages/xcalibur-echolas
 make check      # ruff + pytest
 ```
 
+### End-to-end test
+
+`tests/e2e/` runs the whole ECHOLAS pipeline on a tiny synthetic dataset (6 samples, 3 contigs,
+7.5 kb, known SNPs and indels) and checks the final VCF, the PCA and the tree. It needs
+Nextflow, Java and micromamba, downloads the conda environments the first time and is not part
+of `pytest`/`make check`:
+
+```bash
+export NXF_CONDA_CACHEDIR=~/.cache/xcalibur-e2e/conda   # keeps the environments between runs
+make e2e                                               # = pytest -m e2e -v
+```
+
+The pipeline runs with the `test` profile (`nextflow.config`), which only caps CPU, memory and
+time so it fits a CI runner; it is a test profile, not for real data. The data never goes to the
+repository: `tests/data/make_synthetic.py` writes it with a fixed seed (byte-identical on every
+run) and `tests/data/synthetic_truth.tsv` lists the inserted variants. The `e2e` CI job runs after
+`lint` and `test`, is skipped for PRs into `homolog` that only change documentation, always runs
+for `homolog` → `main`, and uploads the run directory when it fails.
+
 ## Originality
 
 XcaliburAI is an independent implementation. Do not copy code from other projects (including Lobster AI or nf-core) into this repository. Architectural ideas are fine; code is not. If you adapt anything, say so in the PR and check the license first.

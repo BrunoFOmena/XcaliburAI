@@ -47,7 +47,9 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# The end-to-end test runs the real pipeline; it is opt-in: pytest -m e2e (issue #11).
+addopts = "-q -m 'not e2e'"
+markers = ["e2e: runs a real workflow end to end (needs Nextflow and micromamba)"]
 
 [tool.ruff]
 line-length = 100

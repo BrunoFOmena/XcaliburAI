@@ -26,10 +26,10 @@ class NextflowEngine:
 
     def build_command(self, spec: RunSpec) -> list[str]:
         """Build the argument list (never a shell string) from validated parts."""
-        workflow = spec.plugin.manifest.workflow
+        profile = spec.profile or spec.plugin.manifest.workflow.profile
         cmd = [self.executable, "run", str(spec.plugin.workflow_path.absolute())]
-        if workflow.profile:
-            cmd += ["-profile", workflow.profile]
+        if profile:
+            cmd += ["-profile", profile]
         if spec.resume:
             cmd.append("-resume")
         for key in sorted(spec.params):

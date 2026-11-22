@@ -39,3 +39,86 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]" -e packages/xcalibur-echolas
       - run: pytest
+
+  # Full ECHOLAS pipeline on synthetic data (tests/e2e, issue #11). Optional for PRs into
+  # homolog that only touch documentation; always runs for homolog -> main and on pushes.
+  e2e:
+    name: e2e
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      NXF_VER: "26.10.6"
+      MICROMAMBA_VERSION: "2.0.5-0"
+      XCALIBUR_E2E_REQUIRED: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Decide whether the end-to-end test is needed
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          run=true
+          if [ "$EVENT" = "pull_request" ] && [ "$BASE" = "homolog" ]; then
+            code=$(git diff --name-only "$BASE_SHA...$HEAD_SHA" \
+              | grep -Ev '^(docs/|LICENSE$|\.github/ISSUE_TEMPLATE/)|\.md$' || true)
+            if [ -z "$code" ]; then
+              run=false
+              echo "Documentation-only change: the end-to-end test is skipped."
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "NXF_CONDA_CACHEDIR=$RUNNER_TEMP/e2e-conda" >> "$GITHUB_ENV"
+          echo "XCALIBUR_E2E_WORKDIR=$RUNNER_TEMP/e2e-run" >> "$GITHUB_ENV"
+      - if: steps.scope.outputs.run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - if: steps.scope.outputs.run == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Cache conda environments and Nextflow
+        if: steps.scope.outputs.run == 'true'
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.NXF_CONDA_CACHEDIR }}
+            ~/.nextflow/framework
+          key: e2e-${{ env.NXF_VER }}-${{ hashFiles('packages/xcalibur-echolas/src/xcalibur_echolas/workflow/**/*.nf', 'packages/xcalibur-echolas/src/xcalibur_echolas/workflow/nextflow.config') }}
+          restore-keys: e2e-${{ env.NXF_VER }}-
+      - name: Install Nextflow, micromamba and XcaliburAI
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL https://get.nextflow.io | bash
+          mv nextflow "$HOME/.local/bin/"
+          curl -fsSL "https://github.com/mamba-org/micromamba-releases/releases/download/${MICROMAMBA_VERSION}/micromamba-linux-64" \
+            -o "$HOME/.local/bin/micromamba"
+          chmod +x "$HOME/.local/bin/micromamba"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          pip install -e ".[dev]" -e packages/xcalibur-echolas
+      - name: Run the end-to-end test
+        if: steps.scope.outputs.run == 'true'
+        env:
+          # A cold cache builds every conda environment during the run.
+          XCALIBUR_E2E_TIMEOUT: ${{ steps.cache.outputs.cache-hit == 'true' && '900' || '1800' }}
+        run: |
+          nextflow -version
+          micromamba --version
+          pytest -m e2e -v
+      - name: Upload the run on failure
+        if: failure() && steps.scope.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-run-${{ github.run_id }}
+          path: ${{ env.XCALIBUR_E2E_WORKDIR }}
+          retention-days: 7
+          if-no-files-found: warn
