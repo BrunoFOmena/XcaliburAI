@@ -18,8 +18,10 @@ workflow:
 inputs:
   - name: raw_data
     kind: fastq
-    description: Directory of gzip-compressed FASTQ files, paired (_1/_2 or _R1/_R2) or single-end.
-    pattern: "*.fastq.gz"
+    description: >
+      Directory of gzip-compressed FASTQ files (.fastq.gz or .fq.gz), paired
+      (<sample>_R1/_R2, _1/_2 or _R1_001/_R2_001, any case) or single-end (<sample>.fastq.gz).
+    pattern: "*.{fastq,fq}.gz"
     multiple: true
   - name: reference
     kind: fasta

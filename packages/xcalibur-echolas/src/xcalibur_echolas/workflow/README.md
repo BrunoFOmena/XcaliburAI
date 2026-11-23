@@ -11,7 +11,8 @@ for the license and the list of adaptations.
 | `scripts/` | Helpers called by the modules (PCA, FASTA generation) and standalone downstream tools (diversity, Fst, clade divergence, report) that are not part of `main.nf` |
 | `nextflow.config` | Parameter defaults, executor and resources |
 
-Parameters: `--mode` (only `AUTO`), `--raw_data <dir>` (`*.fastq.gz`) and
+Parameters: `--mode` (only `AUTO`), `--raw_data <dir>` (`*.fastq.gz` or `*.fq.gz`; pairs
+named `<sample>_R1`/`_R2`, `_1`/`_2` or `_R1_001`/`_R2_001`, any case) and
 `--reference <dir>` (exactly one `.fna`/`.fa`/`.fasta`). Outputs are written to `results/`
 in the launch directory.
 

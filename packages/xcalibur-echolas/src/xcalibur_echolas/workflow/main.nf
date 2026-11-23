@@ -42,17 +42,24 @@ workflow {
     // INPUT
     ////////////////////////////////////////////////////
 
+    // Sample and mate come from the file name (issue #63): <sample>.fastq.gz is single-end,
+    // <sample>_R1/_R2 (or _1/_2, or Illumina's _R1_001) is a pair. The mate tag is read only
+    // at the end of the name and in any case; the rest of the name, dots included, is the
+    // sample. xcalibur_echolas/validation.py uses these same two patterns (tests compare).
+    def FASTQ_NAME  = ~/(?i)^(.+)\.f(?:ast)?q\.gz$/
+    def MATE_SUFFIX = ~/(?i)^(.+?)_(?:R([12])_\d{3}|R?([12]))$/
+
     reads = Channel
-        .fromPath("${params.raw_data}/*.fastq.gz")
+        .fromPath("${params.raw_data}/*")
+        .filter { f -> f.name ==~ FASTQ_NAME }
         .map { f ->
 
-            def sample = f.simpleName
-                .replace("_R1","")
-                .replace("_R2","")
-                .replace("_1","")
-                .replace("_2","")
+            def stem = (f.name =~ FASTQ_NAME)[0][1]
+            def tag  = stem =~ MATE_SUFFIX
 
-            tuple(sample, f)
+            tag.matches()
+                ? tuple(tag.group(1), "R" + (tag.group(2) ?: tag.group(3)), f)
+                : tuple(stem, "SE", f)
         }
 
     ////////////////////////////////////////////////////

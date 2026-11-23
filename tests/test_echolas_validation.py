@@ -3,12 +3,19 @@
 import gzip
 import json
 import os
+import shutil
+import subprocess
 
 import pytest
 
 from xcalibur import cli
 from xcalibur_echolas import plugin
-from xcalibur_echolas.validation import pipeline_mate, pipeline_sample, validate_inputs
+from xcalibur_echolas.validation import (
+    FASTQ_NAME,
+    MATE_SUFFIX,
+    parse_fastq_name,
+    validate_inputs,
+)
 
 GENOME = ">contig1\nACGTACGTAC\n"
 
@@ -41,30 +48,81 @@ def warning_codes(report):
     return sorted(issue.code for issue in report.warnings)
 
 
-# -- the pipeline's own naming rules -------------------------------------------------------
-# Expected values were produced by running main.nf's and trimming_qc.nf's expressions in
-# Nextflow on these exact names.
+# -- the naming rule (issue #63) ------------------------------------------------------
 
-@pytest.mark.parametrize(
-    "name, sample, mate",
-    [
-        ("S1_R1.fastq.gz", "S1", "R1"),
-        ("S1_R2.fastq.gz", "S1", "R2"),
-        ("S2_1.fastq.gz", "S2", "R1"),
-        ("S2_2.fastq.gz", "S2", "R2"),
-        ("S3.fastq.gz", "S3", "SE"),
-        ("S4.lane1_R1.fastq.gz", "S4", "R1"),
-        ("S5_r1.fastq.gz", "S5_r1", "SE"),
-        ("S6_R1_001.fastq.gz", "S6_001", "R1"),
-        ("S7_1_R2.fastq.gz", "S7", "R1"),
-        ("S8_10.fastq.gz", "S80", "SE"),
-        ("SRR_123_1.fastq.gz", "SRR23", "R1"),
-        ("_R1.fastq.gz", "", "R1"),
-    ],
-)
-def test_sample_and_mate_follow_the_pipeline(name, sample, mate):
-    assert pipeline_sample(name) == sample
-    assert pipeline_mate(name) == mate
+NAMES = [
+    ("S1_R1.fastq.gz", ("S1", "R1")),
+    ("S1_R2.fastq.gz", ("S1", "R2")),
+    ("S2_1.fastq.gz", ("S2", "R1")),
+    ("S2_2.fq.gz", ("S2", "R2")),
+    ("S3.fastq.gz", ("S3", "SE")),
+    ("A_r1.fastq.gz", ("A", "R1")),
+    ("A_r2.FASTQ.GZ", ("A", "R2")),
+    ("S4.lane1_R1.fastq.gz", ("S4.lane1", "R1")),
+    ("S6_R1_001.fastq.gz", ("S6", "R1")),
+    ("S7_1_R2.fastq.gz", ("S7_1", "R2")),
+    ("S8_10.fastq.gz", ("S8_10", "SE")),
+    ("SRR_123_1.fastq.gz", ("SRR_123", "R1")),
+    ("X_L001_R2_001.fq.gz", ("X_L001", "R2")),
+    ("A_1_123.fastq.gz", ("A_1_123", "SE")),
+    ("_R1.fastq.gz", ("_R1", "SE")),
+    ("A.fastq", None),
+    ("A.fastq.bz2", None),
+    ("notes.txt", None),
+]
+
+
+@pytest.mark.parametrize("name, expected", NAMES)
+def test_sample_and_mate_from_the_file_name(name, expected):
+    assert parse_fastq_name(name) == expected
+
+
+def test_main_nf_uses_the_same_patterns():
+    main = plugin().workflow_path.read_text(encoding="utf-8")
+    assert f"~/{FASTQ_NAME}/" in main
+    assert f"~/{MATE_SUFFIX}/" in main
+
+
+PARITY_NF = """
+nextflow.enable.dsl=2
+workflow {
+    def FASTQ_NAME  = ~/%s/
+    def MATE_SUFFIX = ~/%s/
+    Channel.fromPath("${params.raw_data}/*")
+        .filter { f -> f.name ==~ FASTQ_NAME }
+        .map { f ->
+            def stem = (f.name =~ FASTQ_NAME)[0][1]
+            def tag  = stem =~ MATE_SUFFIX
+            def r = tag.matches()
+                ? [tag.group(1), "R" + (tag.group(2) ?: tag.group(3))]
+                : [stem, "SE"]
+            "PARITY\t${f.name}\t${r[0]}\t${r[1]}"
+        }
+        .view()
+}
+"""
+
+
+@pytest.mark.e2e
+@pytest.mark.skipif(shutil.which("nextflow") is None, reason="needs Nextflow")
+def test_nextflow_reads_names_exactly_like_python(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    for name, _ in NAMES:
+        (raw / name).write_bytes(b"x")
+    (raw / ".hidden_R1.fastq.gz").write_bytes(b"x")
+    script = tmp_path / "parity.nf"
+    script.write_text(PARITY_NF % (FASTQ_NAME, MATE_SUFFIX))
+    out = subprocess.run(
+        ["nextflow", "-q", "run", str(script), "--raw_data", str(raw)],
+        cwd=tmp_path, capture_output=True, text=True, timeout=300, check=True,
+    ).stdout
+    seen = {}
+    for line in out.splitlines():
+        if line.startswith("PARITY\t"):
+            _, name, sample, mate = line.split("\t")
+            seen[name] = (sample, mate)
+    assert seen == {name: parsed for name, parsed in NAMES if parsed is not None}
 
 
 # -- reference ----------------------------------------------------------------------------
@@ -128,8 +186,15 @@ def test_gzipped_fastq_passes(tmp_path):
     assert validate_inputs(make(tmp_path, ["A.fastq.gz"])).ok
 
 
-@pytest.mark.parametrize("name", ["A.fastq", "A.fq", "A.fq.gz", "A.FASTQ.GZ", "A.fastq.bz2"])
-def test_fastq_not_named_fastq_gz_fails(tmp_path, name):
+@pytest.mark.parametrize("name", ["A.fq.gz", "A.FASTQ.GZ", "A.Fastq.Gz"])
+def test_fq_gz_and_any_case_pass(tmp_path, name):
+    report = validate_inputs(make(tmp_path, [name]))
+    assert report.ok, report.errors
+    assert report.summary["samples"][0]["sample"] == "A"
+
+
+@pytest.mark.parametrize("name", ["A.fastq", "A.fq", "A.FASTQ", "A.fastq.bz2"])
+def test_uncompressed_fastq_fails(tmp_path, name):
     inputs = make(tmp_path, ["B.fastq.gz"])
     (inputs["raw_data"] / name).write_text("@r\nACGT\n+\nIIII\n")
     report = validate_inputs(inputs)
@@ -210,35 +275,54 @@ def test_single_and_paired_files_for_one_sample_fail(tmp_path):
     assert codes(report) == ["layout_mixed"]
 
 
-def test_lowercase_mate_suffix_fails(tmp_path):
-    report = validate_inputs(make(tmp_path, ["A_r1.fastq.gz", "A_r2.fastq.gz"]))
-    assert codes(report) == ["mate_suffix_lowercase", "mate_suffix_lowercase"]
-    assert "_R1" in report.errors[0].message
+@pytest.mark.parametrize(
+    "pair, sample",
+    [
+        (("A_r1.fastq.gz", "A_r2.fastq.gz"), "A"),
+        (("A.v2_R1.fastq.gz", "A.v2_R2.fastq.gz"), "A.v2"),
+        (("SRR_123_1.fastq.gz", "SRR_123_2.fastq.gz"), "SRR_123"),
+        (("S_1_R1.fq.gz", "S_1_R2.fq.gz"), "S_1"),
+        (("X_S1_L001_R1_001.fastq.gz", "X_S1_L001_R2_001.fastq.gz"), "X_S1_L001"),
+    ],
+)
+def test_names_the_old_rule_got_wrong_now_pair_correctly(tmp_path, pair, sample):
+    report = validate_inputs(make(tmp_path, pair))
+    assert report.ok and not report.warnings, (report.errors, report.warnings)
+    (found,) = report.summary["samples"]
+    assert (found["sample"], found["layout"]) == (sample, "paired-end")
 
 
-def test_lanes_that_collapse_into_one_sample_fail(tmp_path):
-    names = ["A.L1_R1.fastq.gz", "A.L1_R2.fastq.gz", "A.L2_R1.fastq.gz", "A.L2_R2.fastq.gz"]
+def test_mates_with_different_samples_are_not_paired(tmp_path):
+    # S_2_R1 is sample S_2 and S_1_R2 is sample S_1: two incomplete pairs.
+    report = validate_inputs(make(tmp_path, ["S_2_R1.fastq.gz", "S_1_R2.fastq.gz"]))
+    assert codes(report) == ["mate_missing", "mate_missing"]
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ["A_R1.fastq.gz", "A_r1.fastq.gz", "A_R2.fastq.gz"],
+        ["A.fastq.gz", "A.fq.gz"],
+        ["A_1.fastq.gz", "A_R1.fastq.gz", "A_2.fastq.gz"],
+    ],
+)
+def test_two_files_for_the_same_mate_fail(tmp_path, names):
     report = validate_inputs(make(tmp_path, names))
     assert codes(report) == ["sample_collision"]
     assert report.errors[0].sample == "A"
 
 
-def test_two_files_read_as_the_same_mate_fail(tmp_path):
-    # "_1_" in S_1_R2 makes the pipeline read it as R1 too.
-    report = validate_inputs(make(tmp_path, ["S_2_R1.fastq.gz", "S_1_R2.fastq.gz"]))
-    assert codes(report) == ["sample_collision"]
-
-
-def test_renamed_sample_is_a_warning(tmp_path):
-    report = validate_inputs(make(tmp_path, ["SRR_123_1.fastq.gz", "SRR_123_2.fastq.gz"]))
+def test_lanes_run_apart_with_a_warning(tmp_path):
+    names = [f"A_L00{lane}_R{mate}_001.fastq.gz" for lane in (1, 2) for mate in (1, 2)]
+    report = validate_inputs(make(tmp_path, names + ["B_L001.fastq.gz"]))
     assert report.ok
-    assert warning_codes(report) == ["sample_renamed", "sample_renamed"]
-    assert report.summary["samples"][0]["sample"] == "SRR23"
-    assert "SRR_123" in report.warnings[0].message
+    assert [s["sample"] for s in report.summary["samples"]] == ["A_L001", "A_L002", "B_L001"]
+    assert warning_codes(report) == ["lanes_not_merged"]
+    assert report.warnings[0].sample == "A"
 
 
 def test_unusable_sample_name_fails(tmp_path):
-    report = validate_inputs(make(tmp_path, ["_R1.fastq.gz", "_R2.fastq.gz", "a b.fastq.gz"]))
+    report = validate_inputs(make(tmp_path, ["_R1.fastq.gz", "a b.fastq.gz", "-x.fastq.gz"]))
     assert codes(report) == ["sample_name_invalid"] * 3
 
 
@@ -331,10 +415,10 @@ def test_unreadable_folder_is_an_input_error(tmp_path, capsys, mode):
 
 
 def test_run_refuses_invalid_inputs_before_starting(tmp_path, capsys):
-    inputs = make(tmp_path, ["A_r1.fastq.gz", "A_r2.fastq.gz"])
+    inputs = make(tmp_path, ["A_R1.fastq.gz", "A.fastq.gz"])
     code = cli.main(["run", "echolas", "-i", f"raw_data={inputs['raw_data']}",
                      "-i", f"reference={inputs['reference']}", "--workspace", str(tmp_path),
                      "--nextflow", str(tmp_path / "no-nextflow"), "--no-color"])
     assert code == 2
-    assert "uppercase '_R1'/'_R2'" in capsys.readouterr().err
+    assert "mixes single-end and paired-end" in capsys.readouterr().err
     assert not (tmp_path / "runs").exists()

@@ -13,11 +13,14 @@ Both inputs are folders. `xcalibur plan` and `xcalibur run` check them before an
 | Input | Rule |
 |---|---|
 | `reference` | Exactly one genome, `.fna`, `.fa` or `.fasta`, uncompressed, not empty. Index files (`.fai`, `.dict`, ...) are fine. |
-| `raw_data` | gzip-compressed `*.fastq.gz` files (lowercase extension), at the top level of the folder. |
-| Paired-end | `<sample>_R1.fastq.gz` + `<sample>_R2.fastq.gz`, or `_1`/`_2`. Both mates must be there. |
-| Single-end | `<sample>.fastq.gz`, without a mate suffix. A sample cannot mix both layouts. |
-| Sample names | Letters, digits, `_` and `-`. The pipeline cuts the name at the first `.` and removes every `_1`, `_2`, `_R1` and `_R2`, so `A.L1_R1` and `A.L2_R1` are the same sample (error) and `SRR_123_1` becomes `SRR23` (warning). Merge lanes before the run. |
-| Mate tag | Read only as `_1`, `_2`, `_R1` or `_R2` followed by `_` or `.`: `A_R1-x.fastq.gz` has no such tag, so it is a single-end sample. |
+| `raw_data` | gzip-compressed FASTQ, `.fastq.gz` or `.fq.gz` (any case), at the top level of the folder. Uncompressed files are an error. |
+| Paired-end | `<sample>_R1` + `<sample>_R2`, `_1`/`_2`, or Illumina's `_R1_001`/`_R2_001`, in any case (`_r1` works). The tag is read only at the end of the name. Both mates must be there. |
+| Single-end | `<sample>.fastq.gz`, without a mate tag. A sample cannot mix both layouts, nor have two files for the same mate (`A_R1` and `A_r1`, or `A.fastq.gz` and `A.fq.gz`). |
+| Sample names | Everything before the mate tag and the extension: `A.v2_R1` is sample `A.v2`, `SRR_123_1` is `SRR_123`, `S8_10` is the single-end sample `S8_10`. Letters, digits, `.`, `_` and `-`, starting with a letter or digit. |
+| Mate tag | Read only at the very end of the name: `A_R1-x.fastq.gz` has none, so it is the single-end sample `A_R1-x`. |
+| Lanes | `X_L001_R1_001` and `X_L002_R1_001` are run as two samples (`X_L001`, `X_L002`) with a warning; merge the lanes first if they are one sample. |
+
+The pipeline (`main.nf`) and the check (`validation.py`) use the same two patterns, and a test runs both on the same names.
 
 Ignored: hidden files, the `_disabled/` folder and other subfolders (the pipeline does not read them; other subfolders give a warning), and files that are not FASTQ (warning). The check reads names, sizes and the first two bytes of each FASTQ (gzip signature) only.
 
