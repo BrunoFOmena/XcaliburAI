@@ -18,11 +18,13 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 - Issue template following the project standard, and the issue title-prefix convention in `CONTRIBUTING.md`.
 
 ### Fixed
+- Audit follow-ups of #21 (#32): a `run_id` must start with a letter or digit (`-x` is rejected before touching the disk, so an id from the CLI is never read as an option; the agent tools and the CLI share the same pattern, so `xcalibur run --run-id=-x` exits 2 with `invalid_arguments`); the attempt number is claimed by creating its record exclusively, so two runs of the same `run_id` started at once never share an attempt; the old Nextflow report is set aside before the process starts and put back if it cannot start; a test checks that the engine gets `/dev/null` as stdin.
 - ECHOLAS `plot_pca.R` no longer calls `read_table2` (gone from readr 2) and reads any number of PCs, so the PCA plot works with fewer than 10 samples (#11).
 - ECHOLAS could not build the PCA environment with conda: `r-base` and the R packages now come from `conda-forge` (`bioconda::r-base` does not exist) (#11).
 - ECHOLAS `nextflow.config` enables conda with `conda.enabled = true` instead of `process.conda = true`, which made processes without their own environment ask for a package named `true` (#11).
 
 ### Changed
+- The provenance record is written when the run starts, with `status: "running"`, and rewritten with the outcome at the end; `read_results` refuses a run that is still running (#32).
 - `xcalibur plan` shares the validation of `run` (inputs resolved against `--workspace`) and gains `--json`, `--run-id`, `--workspace` and `--nextflow`; a malformed `KEY=VALUE` now exits with code 2 and the CLI never prints a traceback (#10).
 - `Message` carries tool calls (assistant) and tool results (user), sent to Anthropic as `tool_use`/`tool_result` blocks; `AgentSpec` gains `instructions` and `tools`; `RunRecord.filename_for` is public (#8).
 - Every PR (work and promotion) is merged with a merge commit; squash and rebase merges are no longer used (#35).

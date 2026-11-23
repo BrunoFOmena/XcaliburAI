@@ -45,7 +45,7 @@ Provenance record  +  Interpretation agents ──▶ report
 | `llm/fake.py` | `FakeProvider`: scripted replies for tests and offline development |
 | `llm/anthropic_provider.py` | Anthropic provider on the official SDK (`xcalibur-ai[anthropic]`): system prompt, tools, streaming, bounded retries, clear errors, server-side refusal fallback |
 | `config.py` | `xcalibur.yaml` (user or workspace): provider, model and the NAME of the key variable; never the key |
-| `provenance.py` | `RunRecord`: versions, params, command, status |
+| `provenance.py` | `RunRecord`: versions, params, command, status; one file per attempt, claimed atomically |
 | `workspace.py` | Local on-disk layout (`data/`, `runs/`, `reports/`) |
 | `cli.py` | `version`, `domains`, `plan` (more with the agent layer) |
 

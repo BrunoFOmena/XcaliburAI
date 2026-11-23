@@ -7,7 +7,14 @@ import pytest
 
 from xcalibur.agents.base import AgentRequest, AgentSpec
 from xcalibur.agents.confirmation import AllowAll, CallbackConfirmation
-from xcalibur.agents.core_tools import CORE_TOOLS, RunArgs, build_tool_registry, run_pipeline
+from xcalibur.agents.core_tools import (
+    CORE_TOOLS,
+    RunArgs,
+    RunIdArgs,
+    build_tool_registry,
+    read_results,
+    run_pipeline,
+)
 from xcalibur.agents.runtime import EMPTY_ANSWER, AgentLoop, LLMAgent
 from xcalibur.agents.session import Session
 from xcalibur.agents.supervisor import LLMRouter, Supervisor
@@ -458,6 +465,17 @@ def test_status_tools_need_a_workspace_and_a_known_run(env):
     assert result_of(session, 0)[0]["error"]["type"] == "no_workspace"
     assert result_of(session, 1)[0]["error"]["type"] == "no_workspace"
     assert result_of(session, 2)[0]["error"]["type"] == "invalid_arguments"
+
+
+def test_read_results_refuses_a_run_still_running(env):
+    _, workspace, _, context = env
+    record = RunRecord(
+        run_id="r1", domain="demo", domain_version="1", engine="nextflow", command=[], params={}
+    )
+    record.reserve(workspace.run_dir("r1"))
+    with pytest.raises(ToolError) as info:
+        read_results(RunIdArgs(run_id="r1"), context)
+    assert info.value.kind == "run_not_finished"
 
 
 def test_describe_domain_and_unknown_domain(env):

@@ -76,7 +76,6 @@ class NextflowEngine:
         run_dir.mkdir(parents=True, exist_ok=True)
         log_path = run_dir / "nextflow.log"
         manifest = spec.plugin.manifest
-        attempt = RunRecord.next_attempt(run_dir, spec.run_id)
         record = RunRecord(
             run_id=spec.run_id,
             domain=manifest.name,
@@ -88,14 +87,20 @@ class NextflowEngine:
             params=spec.params,
             inputs={k: str(v.absolute()) for k, v in spec.inputs.items()},
             resumed=spec.resume,
-            attempt=attempt,
         )
+        record.reserve(run_dir)  # claims the attempt number atomically (status "running")
+        attempt = record.attempt
 
         status = "failed"
         returncode: int | None = None
         with log_path.open("a" if attempt > 1 else "w", encoding="utf-8") as log:
-            # Nextflow refuses to overwrite a report; drop the old one only now that we start.
-            _report_path(spec).unlink(missing_ok=True)
+            # Nextflow refuses to overwrite a report: set the old one aside, and drop it only
+            # once the new process has started (put it back if it cannot start).
+            report = _report_path(spec)
+            previous_report = report.with_name(report.name + ".previous")
+            set_aside = report.exists()
+            if set_aside:
+                report.replace(previous_report)
             try:
                 proc = subprocess.Popen(  # noqa: S603 - built from manifest + validated params
                     command,
@@ -106,8 +111,12 @@ class NextflowEngine:
                     start_new_session=True,  # own process group, so children can be stopped too
                 )
             except OSError as exc:
+                if set_aside:
+                    previous_report.replace(report)
                 log.write(f"xcalibur: could not start Nextflow: {exc}\n")
             else:
+                if set_aside:
+                    previous_report.unlink(missing_ok=True)
                 with _sigterm_as_interrupt():
                     try:
                         returncode = proc.wait()
