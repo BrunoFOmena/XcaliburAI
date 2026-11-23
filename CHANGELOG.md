@@ -18,6 +18,7 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 - Issue template following the project standard, and the issue title-prefix convention in `CONTRIBUTING.md`.
 
 ### Fixed
+- `branch-policy`: a PR into `homolog` now fails if it brings any commit of `main` that `homolog` does not have (e.g. a work branch that merged `main`), not only when the head is named `main` or `promote/*`; the error lists the offending commits. Logic in `.github/scripts/check-homolog-pr.sh`, covered by `tests/test_branch_policy.py` (#33).
 - ECHOLAS `plot_pca.R` no longer calls `read_table2` (gone from readr 2) and reads any number of PCs, so the PCA plot works with fewer than 10 samples (#11).
 - ECHOLAS could not build the PCA environment with conda: `r-base` and the R packages now come from `conda-forge` (`bioconda::r-base` does not exist) (#11).
 - ECHOLAS `nextflow.config` enables conda with `conda.enabled = true` instead of `process.conda = true`, which made processes without their own environment ask for a package named `true` (#11).
