@@ -41,7 +41,9 @@ jobs:
             .github/scripts/check-promotion.sh "$BASE_SHA" "$HEAD_SHA" "$HEAD"
           fi
           if [ "$BASE" = "homolog" ]; then
-            git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
-            .github/scripts/check-homolog-pr.sh "$BASE_SHA" "$HEAD_SHA" "$HEAD" origin/main
+            git fetch --no-tags --quiet origin \
+              +refs/heads/main:refs/remotes/origin/main \
+              +refs/heads/homolog:refs/remotes/origin/homolog
+            .github/scripts/check-homolog-pr.sh "$BASE_SHA" "$HEAD_SHA" "$HEAD" origin/main origin/homolog
           fi
           echo "Branch policy OK"

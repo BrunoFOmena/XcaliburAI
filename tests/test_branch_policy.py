@@ -149,3 +149,48 @@ def test_unknown_main_ref_fails(repo: Repo):
     )
     assert res.returncode == 1
     assert "Cannot resolve 'nope'" in res.stdout
+
+
+def test_stale_base_sha_does_not_flag_homolog_commits(repo: Repo):
+    # PR opened with homolog at H1; then homolog gets another PR and is
+    # promoted; the work branch merges the updated homolog. With the stale
+    # H1 as base, homolog's new commits (now also in main) must not be
+    # reported when the current homolog is given.
+    repo.work_branch("feat/slow")
+    stale_base = repo.sha("homolog")
+    repo.work_branch("feat/b")
+    repo.land_in_homolog("feat/b")
+    repo.promote()
+    repo.git("checkout", "-q", "feat/slow")
+    repo.merge("homolog", "Merge homolog into feat/slow")
+    args = ["bash", str(SCRIPT), stale_base, repo.sha("feat/slow"), "feat/slow", "main"]
+    without = subprocess.run(args, cwd=repo.path, capture_output=True, text=True)
+    assert without.returncode == 1  # the false positive the extra ref fixes
+    res = subprocess.run([*args, "homolog"], cwd=repo.path, capture_output=True, text=True)
+    assert res.returncode == 0, res.stdout + res.stderr
+
+
+def test_stale_base_sha_still_flags_main(repo: Repo):
+    stale_base = repo.sha("homolog")
+    repo.work_branch("chore/x")
+    repo.merge("main", "Merge main into chore/x")
+    res = subprocess.run(
+        ["bash", str(SCRIPT), stale_base, repo.sha("chore/x"), "chore/x", "main", "homolog"],
+        cwd=repo.path,
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 1
+    assert "commit from main:" in res.stdout
+
+
+def test_unknown_homolog_ref_fails(repo: Repo):
+    repo.work_branch("feat/e")
+    res = subprocess.run(
+        ["bash", str(SCRIPT), repo.sha("homolog"), repo.sha("feat/e"), "feat/e", "main", "nope"],
+        cwd=repo.path,
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 1
+    assert "Cannot resolve 'nope'" in res.stdout
