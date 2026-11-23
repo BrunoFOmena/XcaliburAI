@@ -24,9 +24,8 @@ from xcalibur.execution.nextflow import NextflowEngine
 from xcalibur.manifest import ManifestError
 from xcalibur.provenance import RunRecord
 from xcalibur.registry import DomainPlugin, DomainRegistry
-from xcalibur.workspace import Workspace
+from xcalibur.workspace import RUN_ID_PATTERN, Workspace
 
-RUN_ID_PATTERN = r"^[A-Za-z0-9_-]+$"
 MAX_FILES_PER_OUTPUT = 50
 LOG_TAIL_LINES = 20
 
@@ -179,6 +178,12 @@ def read_results(args: RunIdArgs, ctx: ToolContext) -> dict[str, Any]:
     if record is None:
         raise ToolError(
             f"Run {args.run_id!r} has no provenance record yet; check get_run_status.",
+            kind="run_not_finished",
+        )
+    if record.status == "running":
+        raise ToolError(
+            f"Run {args.run_id!r} is still running (attempt {record.attempt}); "
+            "check get_run_status.",
             kind="run_not_finished",
         )
     plugin = _plugin(ctx, record.domain)

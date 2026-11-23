@@ -51,6 +51,28 @@ class RunRecord(BaseModel):
             attempt += 1
         return attempt
 
+    def reserve(self, directory: Path) -> Path:
+        """Claim the next free attempt number in ``directory`` and write this record there.
+
+        The file is created exclusively (``open(..., "x")``), so two runs of the same
+        ``run_id`` started at the same time never get the same attempt. Sets ``attempt``
+        and ``status="running"``; :meth:`write` later replaces the file with the outcome.
+        """
+        directory.mkdir(parents=True, exist_ok=True)
+        attempt = self.next_attempt(directory, self.run_id)
+        while True:
+            path = directory / self.filename_for(self.run_id, attempt)
+            try:
+                handle = path.open("x", encoding="utf-8")
+            except FileExistsError:
+                attempt += 1
+                continue
+            self.attempt = attempt
+            self.status = "running"
+            with handle:
+                handle.write(self.model_dump_json(indent=2))
+            return path
+
     @staticmethod
     def filename_for(run_id: str, attempt: int) -> str:
         if attempt == 1:

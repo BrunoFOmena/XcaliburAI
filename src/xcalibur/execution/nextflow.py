@@ -94,7 +94,6 @@ class NextflowEngine:
         run_dir.mkdir(parents=True, exist_ok=True)
         log_path = run_dir / "nextflow.log"
         manifest = spec.plugin.manifest
-        attempt = RunRecord.next_attempt(run_dir, spec.run_id)
         record = RunRecord(
             run_id=spec.run_id,
             domain=manifest.name,
@@ -106,44 +105,19 @@ class NextflowEngine:
             params=spec.params,
             inputs={k: str(v.absolute()) for k, v in spec.inputs.items()},
             resumed=spec.resume,
-            attempt=attempt,
         )
+        record.reserve(run_dir)  # claims the attempt number atomically (status "running")
+        attempt = record.attempt
 
-        status = "failed"
-        returncode: int | None = None
-        with log_path.open("a" if attempt > 1 else "w", encoding="utf-8") as log:
-            if cancel.requested:
-                status = "cancelled"
-                log.write("xcalibur: run cancelled before Nextflow started (SIGINT/SIGTERM)\n")
-            else:
-                # Nextflow refuses to overwrite a report; drop the old one only now we start.
-                _report_path(spec).unlink(missing_ok=True)
-                try:
-                    proc = subprocess.Popen(  # noqa: S603 - built from manifest + validated params
-                        command,
-                        cwd=run_dir,
-                        stdin=subprocess.DEVNULL,
-                        stdout=log,
-                        stderr=subprocess.STDOUT,
-                        start_new_session=True,  # own process group, so children can be stopped
-                    )
-                except OSError as exc:
-                    log.write(f"xcalibur: could not start Nextflow: {exc}\n")
-                else:
-                    try:
-                        returncode, cancelled = _wait(proc, cancel)
-                    finally:
-                        # Any unexpected error while waiting: never leave the group behind.
-                        if proc.poll() is None:
-                            returncode = _terminate(proc)
-                        # Nextflow can exit (failed, cancelled or even succeeded) while tasks
-                        # it started, such as a conda environment build, are still running.
-                        _sweep_group(proc)
-                    if cancelled:
-                        status = "cancelled"
-                        log.write("xcalibur: run cancelled (SIGINT/SIGTERM)\n")
-                    else:
-                        status = "succeeded" if returncode == 0 else "failed"
+        try:
+            status, returncode = self._launch(spec, command, cancel, run_dir, log_path, attempt)
+        except BaseException:
+            # Anything unexpected (an OSError on the log or the report, a bug while waiting):
+            # the record must not stay "running" forever. Mark it failed, then re-raise.
+            record.status = "failed"
+            record.finished_at = datetime.now(UTC)
+            record.write(run_dir)
+            raise
 
         record.status = status
         record.returncode = returncode
@@ -158,6 +132,63 @@ class NextflowEngine:
             run_dir=run_dir,
             record_path=record_path,
         )
+
+
+    def _launch(
+        self,
+        spec: RunSpec,
+        command: list[str],
+        cancel: _CancelRequest,
+        run_dir: Path,
+        log_path: Path,
+        attempt: int,
+    ) -> tuple[str, int | None]:
+        """Start Nextflow and wait for it; return ``(status, returncode)``."""
+        status = "failed"
+        returncode: int | None = None
+        with log_path.open("a" if attempt > 1 else "w", encoding="utf-8") as log:
+            if cancel.requested:
+                status = "cancelled"
+                log.write("xcalibur: run cancelled before Nextflow started (SIGINT/SIGTERM)\n")
+            else:
+                # Nextflow refuses to overwrite a report: set the old one aside, and drop it
+                # only once the new process has started (put it back if it cannot start).
+                report = _report_path(spec)
+                previous_report = report.with_name(report.name + ".previous")
+                set_aside = report.exists()
+                if set_aside:
+                    report.replace(previous_report)
+                try:
+                    proc = subprocess.Popen(  # noqa: S603 - built from manifest + validated params
+                        command,
+                        cwd=run_dir,
+                        stdin=subprocess.DEVNULL,
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True,  # own process group, so children can be stopped
+                    )
+                except OSError as exc:
+                    if set_aside:
+                        previous_report.replace(report)
+                    log.write(f"xcalibur: could not start Nextflow: {exc}\n")
+                else:
+                    if set_aside:
+                        previous_report.unlink(missing_ok=True)
+                    try:
+                        returncode, cancelled = _wait(proc, cancel)
+                    finally:
+                        # Any unexpected error while waiting: never leave the group behind.
+                        if proc.poll() is None:
+                            returncode = _terminate(proc)
+                        # Nextflow can exit (failed, cancelled or even succeeded) while tasks
+                        # it started, such as a conda environment build, are still running.
+                        _sweep_group(proc)
+                    if cancelled:
+                        status = "cancelled"
+                        log.write("xcalibur: run cancelled (SIGINT/SIGTERM)\n")
+                    else:
+                        status = "succeeded" if returncode == 0 else "failed"
+        return status, returncode
 
 
 def supports_execution() -> bool:

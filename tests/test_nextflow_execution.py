@@ -4,7 +4,9 @@ import signal
 import stat
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -13,6 +15,7 @@ from xcalibur.execution import nextflow
 from xcalibur.execution.base import EngineNotFoundError, RunSpec, UnsupportedPlatformError
 from xcalibur.execution.nextflow import NextflowEngine
 from xcalibur.manifest import DomainManifest
+from xcalibur.provenance import RunRecord
 from xcalibur.registry import DomainPlugin
 from xcalibur.workspace import Workspace
 
@@ -21,6 +24,7 @@ if [ "$1" = "-version" ]; then
   printf "      N E X T F L O W\\n      version 24.04.0 build 5917\\n"; exit 0
 fi
 echo "args: $@"
+echo "stdin: $(readlink /proc/$$/fd/0)"
 case "$*" in *--fail*) echo "boom" >&2; exit 3;; esac
 case "$*" in *--hang*) sleep 30;; esac
 case "$*" in *--leak*) sleep 30 & echo "left $!"; exit 1;; esac
@@ -173,7 +177,7 @@ print(NextflowEngine({fake_nextflow(tmp_path)!r}).run(s).status, flush=True)
     assert json.loads(record.read_text())["status"] == "cancelled"
 
 
-@pytest.mark.parametrize("bad", ["../x", "a/b", "", "a b", "x\n", ".."])
+@pytest.mark.parametrize("bad", ["../x", "a/b", "", "a b", "x\n", "..", "-x", "_x"])
 def test_invalid_run_id_is_rejected_without_touching_disk(tmp_path, bad):
     ws = Workspace(tmp_path / "ws")
     with pytest.raises(ValueError, match="Invalid run_id"):
@@ -217,6 +221,86 @@ def test_record_inputs_are_absolute_and_stdin_is_closed(tmp_path, monkeypatch):
     result = NextflowEngine(fake_nextflow(tmp_path)).run(s)
     inputs = json.loads(result.record_path.read_text())["inputs"]
     assert inputs == {"reads": str(tmp_path / "data" / "r.fq")}
+    if Path("/proc/self/fd/0").exists():  # Linux: the engine reads from /dev/null, never a tty
+        assert "stdin: /dev/null" in result.log_path.read_text()
+
+
+def test_concurrent_attempts_of_one_run_id_never_collide(tmp_path):
+    run_dir = tmp_path / "runs" / "r1"
+    records = [
+        RunRecord(run_id="r1", domain="d", domain_version="1", engine="e", command=[], params={})
+        for _ in range(16)
+    ]
+    barrier = threading.Barrier(len(records))
+
+    def claim(record):
+        barrier.wait()
+        return record.reserve(run_dir)
+
+    with ThreadPoolExecutor(len(records)) as pool:
+        paths = list(pool.map(claim, records))
+    assert sorted(r.attempt for r in records) == list(range(1, 17))
+    assert len(set(paths)) == 16
+    assert all(json.loads(p.read_text())["status"] == "running" for p in paths)
+
+
+def test_record_says_running_while_the_engine_runs(tmp_path):
+    engine = NextflowEngine(fake_nextflow(tmp_path))
+    s = spec(tmp_path, params={"hang": True})
+    seen = {}
+    real_wait = subprocess.Popen.wait
+
+    def wait(proc, timeout=None):
+        record = s.run_dir / f"run-{s.run_id}.json"
+        seen.setdefault("status", json.loads(record.read_text())["status"])
+        os.killpg(proc.pid, signal.SIGKILL)  # the whole group, so `sleep` goes too
+        return real_wait(proc, timeout)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(subprocess.Popen, "wait", wait)
+        result = engine.run(s)
+    assert seen["status"] == "running"
+    assert json.loads(result.record_path.read_text())["status"] == "failed"
+
+
+def test_unexpected_error_marks_the_record_failed_and_stops_the_run(tmp_path, monkeypatch):
+    import xcalibur.execution.nextflow as nf
+
+    def broken_wait(proc, cancel):
+        raise RuntimeError("bug while waiting")
+
+    monkeypatch.setattr(nf, "_wait", broken_wait)
+    s = spec(tmp_path, params={"hang": True})
+    with pytest.raises(RuntimeError, match="bug while waiting"):
+        NextflowEngine(fake_nextflow(tmp_path)).run(s)
+    record = json.loads((s.run_dir / f"run-{s.run_id}.json").read_text())
+    assert record["status"] == "failed" and record["finished_at"] is not None
+
+
+def test_report_kept_when_the_process_cannot_start(tmp_path):
+    good = NextflowEngine(fake_nextflow(tmp_path))
+    first = spec(tmp_path)
+    run_dir = good.run(first).run_dir
+    report = run_dir / "nextflow_report.html"
+    report.write_text("old")
+    broken = tmp_path / "broken" / "nextflow"
+    broken.parent.mkdir()
+    broken.write_text("#!/definitely/not/an/interpreter\n")
+    broken.chmod(broken.stat().st_mode | stat.S_IEXEC)
+    result = NextflowEngine(str(broken)).run(spec(tmp_path, run_id=first.run_id, resume=True))
+    assert result.status == "failed" and result.returncode is None
+    assert report.read_text() == "old"
+    assert not (run_dir / "nextflow_report.html.previous").exists()
+
+
+def test_old_report_is_dropped_once_the_process_starts(tmp_path):
+    engine = NextflowEngine(fake_nextflow(tmp_path))
+    first = spec(tmp_path)
+    run_dir = engine.run(first).run_dir
+    (run_dir / "nextflow_report.html").write_text("old")
+    engine.run(spec(tmp_path, run_id=first.run_id, resume=True))
+    assert not (run_dir / "nextflow_report.html").exists()
+    assert not (run_dir / "nextflow_report.html.previous").exists()
 
 
 def test_profile_overrides_the_manifest_default(tmp_path):
