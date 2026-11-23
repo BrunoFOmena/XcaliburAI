@@ -17,6 +17,10 @@ class EngineNotFoundError(RuntimeError):
     """The workflow engine executable is not installed or not on PATH."""
 
 
+class UnsupportedPlatformError(RuntimeError):
+    """The engine cannot execute runs on this operating system (planning still works)."""
+
+
 @dataclass
 class RunSpec:
     plugin: DomainPlugin
