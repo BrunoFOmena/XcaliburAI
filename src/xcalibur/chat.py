@@ -15,7 +15,7 @@ from typing import Any, TextIO
 
 from xcalibur.agents.confirmation import AllowAll, CallbackConfirmation, ConfirmationRequest
 from xcalibur.agents.core_tools import build_tool_registry
-from xcalibur.agents.runtime import AgentLoop, LoopResult
+from xcalibur.agents.runtime import DEFAULT_SYSTEM_PROMPT, AgentLoop, LoopResult
 from xcalibur.agents.session import Session
 from xcalibur.agents.tools import ToolContext
 from xcalibur.execution.base import WorkflowEngine
@@ -37,6 +37,22 @@ Commands:
 Anything else is sent to the assistant. Ctrl+C stops the current answer."""
 
 Reader = Callable[[str], str]
+
+
+def chat_system_prompt(domains: DomainRegistry) -> str:
+    """The runtime's prompt plus the instructions of every installed domain's agents.
+
+    The chat runs one assistant with every tool, so it follows each domain agent's
+    instructions when it does that agent's job (running, interpreting, ...)."""
+    parts = [DEFAULT_SYSTEM_PROMPT]
+    for plugin in domains:
+        for agent in plugin.agents:
+            if agent.instructions:
+                parts.append(
+                    f"## When acting as {agent.name} ({agent.role}) for the "
+                    f"{plugin.name} domain\n\n{agent.instructions}"
+                )
+    return "\n\n".join(parts)
 
 
 @dataclass
@@ -61,7 +77,10 @@ class ChatApp:
         self.session = Session()
         self.session.directory = self.workspace.root / "sessions" / self.session.id
         confirmation = AllowAll() if self.auto_confirm else CallbackConfirmation(self._ask_run)
-        options: dict[str, Any] = {"confirmation": confirmation}
+        options: dict[str, Any] = {
+            "confirmation": confirmation,
+            "system_prompt": chat_system_prompt(self.domains),
+        }
         if self.max_steps is not None:
             options["max_steps"] = self.max_steps
         self.loop = AgentLoop(

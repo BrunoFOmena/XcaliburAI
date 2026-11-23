@@ -23,6 +23,7 @@ from pydantic import BaseModel, ValidationError
 
 from xcalibur.agents.base import AgentRequest, AgentResponse, AgentSpec
 from xcalibur.agents.confirmation import ConfirmationPolicy, ConfirmationRequest, DenyAll
+from xcalibur.agents.grounding import ungrounded_numbers
 from xcalibur.agents.session import Session, ToolCallRecord, ToolCallStatus, now
 from xcalibur.agents.tools import Tool, ToolContext, ToolError, ToolRegistry
 from xcalibur.llm.base import LLMProvider, Message, ToolCall, ToolResult
@@ -41,6 +42,8 @@ Before running a pipeline, call plan_run, then tell the user what will run: the 
 every parameter, the inputs and the exact command. run_pipeline needs the user's \
 confirmation; if it is declined, say so and do not retry on your own.
 If a tool returns an error, read it, fix the arguments and try again, or explain the problem.
+Every number you state about data or results must be copied from a tool result; never \
+compute, estimate or recall one yourself.
 Answer in the user's language."""
 
 
@@ -53,6 +56,21 @@ class LoopResult:
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
     """Tool calls made in this turn (the session keeps them all)."""
     error: str | None = None
+    ungrounded_numbers: list[str] = field(default_factory=list)
+    """Numbers in ``text`` that no grounded tool result of this turn supports (after one
+    correction); the text then ends with a warning."""
+
+
+GROUNDING_RETRY = (
+    "[grounding check] Your answer states numbers that are not in any tool result of this "
+    "turn: {numbers}. Rewrite the answer using only numbers copied from the tool results "
+    "(call a tool if you need another value), or leave those numbers out. Do not mention "
+    "this check."
+)
+GROUNDING_WARNING = (
+    "⚠ These numbers could not be traced to a tool result and may be wrong: {numbers}. "
+    "Check them against the output files before using them."
+)
 
 
 class AgentLoop:
@@ -84,6 +102,8 @@ class AgentLoop:
             if unknown:
                 raise ValueError(f"allowed_tools lists unknown tools: {unknown}")
         self.allowed_tools = None if allowed_tools is None else list(allowed_tools)
+        self._grounded_results: list[str] = []
+        """Full text of this turn's successful grounded results."""
 
     def tool_names(self) -> list[str]:
         return self.tools.names() if self.allowed_tools is None else list(self.allowed_tools)
@@ -91,11 +111,13 @@ class AgentLoop:
     def run(self, message: str, session: Session | None = None) -> LoopResult:
         session = session if session is not None else Session()
         context = replace(self.context, session=session)
+        self._grounded_results = []  # only this turn's results ground this turn's answer
         _add_user_text(session, message)
         specs = self.tools.specs(self.tool_names())
         first_record = len(session.tool_calls)
 
         last_text = ""
+        retried = False
         for step in range(1, self.max_steps + 1):
             history = [Message(role="system", content=self.system_prompt), *session.messages]
             try:
@@ -113,11 +135,19 @@ class AgentLoop:
             if not calls:
                 text = completion.text if completion.text.strip() else EMPTY_ANSWER
                 session.messages.append(Message(role="assistant", content=text))
+                missing = self._ungrounded(text, message)
+                if missing and not retried and step < self.max_steps:
+                    retried = True
+                    _add_user_text(session, GROUNDING_RETRY.format(numbers=", ".join(missing)))
+                    continue
+                if missing:
+                    text = f"{text}\n\n{GROUNDING_WARNING.format(numbers=', '.join(missing))}"
                 return LoopResult(
                     text=text,
                     stop_reason="completed",
                     steps=step,
                     tool_calls=session.tool_calls[first_record:],
+                    ungrounded_numbers=missing,
                 )
             session.messages.append(
                 Message(role="assistant", content=completion.text, tool_calls=calls)
@@ -134,6 +164,14 @@ class AgentLoop:
             steps=self.max_steps,
             tool_calls=session.tool_calls[first_record:],
         )
+
+    def _ungrounded(self, text: str, message: str) -> list[str]:
+        """Numbers of ``text`` not found in this turn's grounded results (nor the message).
+
+        Nothing is checked when the turn used no grounded tool."""
+        if not self._grounded_results:
+            return []
+        return ungrounded_numbers(text, [message, *self._grounded_results])
 
     # -- tool execution ---------------------------------------------------------------
 
@@ -162,6 +200,7 @@ class AgentLoop:
         self, step: int, call: ToolCall, context: ToolContext, session: Session
     ) -> ToolResult:
         started = now()
+        tool: Tool | None = None
         confirmation: Literal["approved", "declined"] | None = None
         status: ToolCallStatus
         call_context = context
@@ -200,21 +239,22 @@ class AgentLoop:
             status = "internal_error"
             text = _serialize(_error("internal_error", f"Result is not serializable: {exc}"))
         content, truncated, saved = self._bounded(step, call.id, text, session)
-        session.record(
-            ToolCallRecord(
-                step=step,
-                call_id=call.id,
-                tool=call.name,
-                arguments=dict(call.input),
-                status=status,
-                started_at=started,
-                finished_at=now(),
-                confirmation=confirmation,
-                truncated=truncated,
-                result_path=None if saved is None else str(saved),
-                summary=content[:500],
-            )
+        record = ToolCallRecord(
+            step=step,
+            call_id=call.id,
+            tool=call.name,
+            arguments=dict(call.input),
+            status=status,
+            started_at=started,
+            finished_at=now(),
+            confirmation=confirmation,
+            truncated=truncated,
+            result_path=None if saved is None else str(saved),
+            summary=content[:500],
         )
+        session.record(record)
+        if status == "ok" and tool is not None and tool.grounded:
+            self._grounded_results.append(text)
         return ToolResult(tool_call_id=call.id, content=content, is_error=status != "ok")
 
     def _tool(self, name: str) -> Tool:

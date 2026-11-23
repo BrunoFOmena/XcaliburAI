@@ -51,7 +51,7 @@ Validation rules enforced by the core: unknown params are rejected; types are co
 
 1. Write `manifest.yaml` with safe defaults for every parameter.
 2. Provide the workflow and a container/environment recipe.
-3. Declare agents by role (execution, interpretation, ...).
+3. Declare agents by role (execution, interpretation, ...): `AgentSpec(name, role, description, instructions, tools)`. Keep the instructions in files next to the code (ECHOLAS: `prompts/*.md`, shipped as package data) and list only the tools each agent needs. Tools that read results should be read-only, take a `run_id` (never a free path), stay inside the run directory and set `grounded=True`, so the numbers an answer gives must come from them ([AGENT_RUNTIME.md](AGENT_RUNTIME.md#grounded-numbers-agentsgroundingpy)).
 4. Add tests: the manifest loads and `resolve_params({})` returns the expected defaults.
 5. If wrong inputs could make the workflow fail late or produce wrong results silently, add a `validate_inputs` hook that mirrors how the workflow reads them.
 6. Open a PR against `homolog`.
