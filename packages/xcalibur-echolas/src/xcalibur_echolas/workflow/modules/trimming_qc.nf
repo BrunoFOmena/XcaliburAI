@@ -237,7 +237,7 @@ process FASTQC_POST {
 workflow TRIMMING_QC {
 
     take:
-    reads
+    reads   // tuple(sample, mate, file); mate is R1, R2 or SE (decided in main.nf)
 
     main:
     def mode = params.mode ?: "AUTO"
@@ -246,26 +246,16 @@ workflow TRIMMING_QC {
     // FASTQC PRÉ
     ////////////////////////////////////////////////////
 
-    qc = FASTQC_RAW(reads)
+    qc = FASTQC_RAW(reads.map { sample, mate, f -> tuple(sample, f) })
 
     qmetrics = FASTQC_PARSE(qc.zip)
         .map { s, q -> tuple(s, q as double) }
 
     ////////////////////////////////////////////////////
-    // DETECÇÃO PE REAL (compatível Nextflow 25+)
+    // PE / SE (the mate comes with each file from main.nf)
     ////////////////////////////////////////////////////
 
-    classified = reads.map { sample, f ->
-
-        def role =
-            f.name =~ /_R?1(_|\.)/ ? "R1" :
-            f.name =~ /_R?2(_|\.)/ ? "R2" :
-            "SE"
-
-        tuple(sample, role, f)
-    }
-
-    grouped = classified.groupTuple(by: 0)
+    grouped = reads.groupTuple(by: 0)
 
     paired = grouped
         .filter { sample, roles, files ->

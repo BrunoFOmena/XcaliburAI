@@ -1,18 +1,22 @@
-"""Input validation for the ECHOLAS pipeline (issue #6).
+"""Input validation for the ECHOLAS pipeline (issues #6 and #63).
 
-The checks mirror how the pipeline itself reads its inputs, because the dangerous
-failures are the silent ones: a missing mate, a lowercase ``_r1`` or a dot in a sample
-name do not make Nextflow fail, they make it treat the reads differently (single-end
-instead of paired, two samples merged into one) and still produce plausible results.
+The checks follow how the pipeline itself reads its inputs, because the dangerous
+failures are the silent ones: a missing mate or two files that end up as the same sample
+do not make Nextflow fail, they make it treat the reads differently and still produce
+plausible results.
 
-What the pipeline does (main.nf and modules/trimming_qc.nf):
+How the pipeline reads them (main.nf):
 
 * reference: ``file("${reference}/*.{fna,fa,fasta}")``, needs exactly one match;
-* reads: ``Channel.fromPath("${raw_data}/*.fastq.gz")``, top level only, case-sensitive;
-* sample name: ``simpleName`` (the file name up to its first ``.``) with every ``_R1``,
-  ``_R2``, ``_1`` and ``_2`` removed, in that order;
-* mate: R1 when the name contains ``_1`` or ``_R1`` followed by ``_`` or ``.``, else R2
-  for ``_2``/``_R2``, else single-end; a sample is paired only when it has both mates.
+* reads: top-level files of ``raw_data`` whose name matches :data:`FASTQ_NAME`
+  (``.fastq.gz`` or ``.fq.gz``, any case);
+* sample and mate: :data:`MATE_SUFFIX` on the name without its extension. ``_R1``/``_R2``,
+  ``_1``/``_2`` or ``_R1_NNN``/``_R2_NNN`` at the very end (any case) make a mate and the
+  rest is the sample; any other name is a single-end sample. A sample is paired only when
+  it has both mates.
+
+``FASTQ_NAME`` and ``MATE_SUFFIX`` are written character for character in main.nf;
+tests/test_echolas_validation.py checks that and, with Nextflow installed, runs both.
 
 Only names and metadata are read (plus the two gzip magic bytes of each FASTQ); nothing
 is written, and files are never read whole.
@@ -27,35 +31,39 @@ from typing import Any
 
 from xcalibur.inputs import InputReport
 
-FASTQ_SUFFIX = ".fastq.gz"
+FASTQ_NAME = r"(?i)^(.+)\.f(?:ast)?q\.gz$"
+"""A FASTQ file the pipeline reads; group 1 is the name without the extension."""
+MATE_SUFFIX = r"(?i)^(.+?)_(?:R([12])_\d{3}|R?([12]))$"
+"""Mate tag at the end of that name; group 1 is the sample, group 2 or 3 the mate."""
+
 REFERENCE_SUFFIXES = (".fna", ".fa", ".fasta")
 IGNORED_DIRS = {"_disabled"}
 """Folders the ECHOLAS layout uses to park files; the pipeline never reads subfolders."""
 
 GZIP_MAGIC = b"\x1f\x8b"
-_R1 = re.compile(r"_R?1(_|\.)")
-_R2 = re.compile(r"_R?2(_|\.)")
-_LOWER_MATE = re.compile(r"_r[12](_|\.)")
+# re.ASCII: Java (Nextflow) regexes match \d and (?i) on ASCII only; Python's would also
+# accept other digits and case rules, so A_R1_١٢٣ would be R1 here and single-end there.
+_FASTQ = re.compile(FASTQ_NAME, re.ASCII)
+_MATE = re.compile(MATE_SUFFIX, re.ASCII)
 _FASTQ_LIKE = re.compile(r"\.(fastq|fq)(\.(gz|bz2|xz|zst))?$", re.IGNORECASE)
 _REFERENCE_LIKE = re.compile(r"\.(fna|fa|fasta)(\.(gz|bz2|xz|zst))?$", re.IGNORECASE)
-_SAFE_SAMPLE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+_SAFE_SAMPLE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+_LANE = re.compile(r"(?i)^(.+)_L\d{3}$", re.ASCII)
 
 
-def pipeline_sample(name: str) -> str:
-    """Sample name the pipeline derives from a FASTQ file name (main.nf)."""
-    sample = name.split(".", 1)[0]
-    for suffix in ("_R1", "_R2", "_1", "_2"):
-        sample = sample.replace(suffix, "")
-    return sample
+def parse_fastq_name(name: str) -> tuple[str, str] | None:
+    """``(sample, mate)`` the pipeline derives from a file name, or None if it skips it.
 
-
-def pipeline_mate(name: str) -> str:
-    """``R1``, ``R2`` or ``SE``, exactly as modules/trimming_qc.nf classifies a file."""
-    if _R1.search(name):
-        return "R1"
-    if _R2.search(name):
-        return "R2"
-    return "SE"
+    ``mate`` is ``R1``, ``R2`` or ``SE``.
+    """
+    fastq = _FASTQ.fullmatch(name)
+    if fastq is None:
+        return None
+    stem = fastq.group(1)
+    tag = _MATE.fullmatch(stem)
+    if tag is None:
+        return stem, "SE"
+    return tag.group(1), "R" + (tag.group(2) or tag.group(3))
 
 
 def validate_inputs(inputs: Mapping[str, Path]) -> InputReport:
@@ -121,7 +129,7 @@ def _check_reference(path: Path | None, report: InputReport) -> dict[str, Any] |
 
 
 def _check_reads(path: Path | None, report: InputReport) -> list[dict[str, Any]]:
-    folder = _folder(path, "raw_data", "the folder with the .fastq.gz files", report)
+    folder = _folder(path, "raw_data", "the folder with the .fastq.gz/.fq.gz files", report)
     if folder is None:
         return []
     listing = _list_folder(folder, "raw_data", report)
@@ -137,39 +145,33 @@ def _check_reads(path: Path | None, report: InputReport) -> list[dict[str, Any]]
 
     groups: dict[str, list[tuple[Path, str]]] = {}
     for file in files:
-        name = file.name
-        if not name.endswith(FASTQ_SUFFIX):
-            if _FASTQ_LIKE.search(name):
+        parsed = parse_fastq_name(file.name)
+        if parsed is None:
+            if _FASTQ_LIKE.search(file.name):
                 report.error("fastq_not_gzipped",
-                             f"{file} is not named *.fastq.gz, so the pipeline would skip "
-                             "it: compress it with gzip and/or rename it to end in "
-                             "'.fastq.gz' (lowercase).", input="raw_data", path=file)
+                             f"{file} is not gzip-compressed (or not named .fastq.gz/.fq.gz), "
+                             "so the pipeline would skip it: compress it with gzip.",
+                             input="raw_data", path=file)
             else:
                 report.warn("file_ignored", f"{file} is not a FASTQ file and is ignored.",
                             input="raw_data", path=file)
             continue
         if not _check_fastq_file(file, report):
             continue
-        if _LOWER_MATE.search(name) and pipeline_mate(name) == "SE":
-            report.error("mate_suffix_lowercase",
-                         f"{file}: the pipeline recognises only '_1'/'_2' or uppercase "
-                         "'_R1'/'_R2', so it would treat this file as single-end. Rename it "
-                         "with '_R1' or '_R2'.", input="raw_data", path=file)
-            continue
-        sample = pipeline_sample(name)
+        sample, mate = parsed
         if not _SAFE_SAMPLE.fullmatch(sample):
-            shown = repr(sample) if sample else "an empty name"
             report.error("sample_name_invalid",
-                         f"{file}: the pipeline would name this sample {shown}. Sample names "
-                         "must start with a letter or digit and use only letters, digits, "
+                         f"{file}: the sample name would be {sample!r}. Sample names must "
+                         "start with a letter or digit and use only letters, digits, '.', "
                          "'_' or '-'; rename the file.", input="raw_data", path=file)
             continue
-        groups.setdefault(sample, []).append((file, pipeline_mate(name)))
+        groups.setdefault(sample, []).append((file, mate))
 
     samples = [_check_sample(sample, files, report) for sample, files in sorted(groups.items())]
     samples = [s for s in samples if s is not None]
+    _warn_lanes(sorted(groups), report)
     if not groups and not any(i.input == "raw_data" for i in report.errors):
-        report.error("no_samples", f"No *.fastq.gz files in {folder}.",
+        report.error("no_samples", f"No FASTQ files (.fastq.gz or .fq.gz) in {folder}.",
                      input="raw_data", path=folder)
     return samples
 
@@ -200,19 +202,12 @@ def _check_sample(
         return None
     else:
         report.error("sample_collision",
-                     f"Files {', '.join(names)} all become sample '{sample}' in the pipeline "
-                     "(it cuts the name at the first '.' and removes every '_1', '_2', '_R1' "
-                     "and '_R2'). Give each sample a distinct name with exactly one R1 and "
-                     "one R2 file (merge lanes first), or a single single-end file.", **where)
+                     f"Files {', '.join(names)} all become sample '{sample}' "
+                     f"({', '.join(mates)}): give each sample exactly one R1 and one R2 "
+                     "file, or a single single-end file (the mate tag is read in any case, "
+                     "so A_R1 and A_r1 are the same mate; A.fastq.gz and A.fq.gz the same "
+                     "file).", **where)
         return None
-
-    for file, mate in files:
-        expected = _expected_sample(file.name, mate)
-        if expected != sample:
-            report.warn("sample_renamed",
-                        f"{file.name} will be reported as sample '{sample}', not '{expected}' "
-                        "(the pipeline cuts the name at the first '.' and removes every '_1', "
-                        "'_2', '_R1' and '_R2').", path=file, **where)
 
     ordered = sorted(files, key=lambda item: item[1])
     return {
@@ -225,16 +220,19 @@ def _check_sample(
     }
 
 
-def _expected_sample(name: str, mate: str) -> str:
-    """The name a person would expect: the file name without .fastq.gz and its mate tag."""
-    stem = name[: -len(FASTQ_SUFFIX)]
-    if mate == "SE":
-        return stem
-    match = (_R1 if mate == "R1" else _R2).search(name)
-    if match is None:  # pragma: no cover - mate came from the same patterns
-        return stem
-    # Drop the tag ("_1" or "_R1") and keep the '_' or '.' that followed it.
-    return (name[: match.start()] + name[match.end() - 1 :])[: -len(FASTQ_SUFFIX)]
+def _warn_lanes(samples: list[str], report: InputReport) -> None:
+    """Samples that differ only by an Illumina lane tag (_L001, _L002) are run apart."""
+    lanes: dict[str, list[str]] = {}
+    for sample in samples:
+        match = _LANE.fullmatch(sample)
+        if match:
+            lanes.setdefault(match.group(1), []).append(sample)
+    for base, members in sorted(lanes.items()):
+        if len(members) > 1:
+            report.warn("lanes_not_merged",
+                        f"Samples {', '.join(members)} look like lanes of '{base}'; the "
+                        "pipeline runs them as separate samples. Merge the lanes first if "
+                        "they are the same sample.", input="raw_data", sample=base)
 
 
 def _check_fastq_file(file: Path, report: InputReport) -> bool:
@@ -253,7 +251,7 @@ def _check_fastq_file(file: Path, report: InputReport) -> bool:
         return False
     if magic != GZIP_MAGIC:
         report.error("fastq_not_gzipped",
-                     f"{file} ends in .fastq.gz but is not gzip-compressed: compress it with "
+                     f"{file} has a .gz name but is not gzip-compressed: compress it with "
                      "gzip.", input="raw_data", path=file)
         return False
     return True

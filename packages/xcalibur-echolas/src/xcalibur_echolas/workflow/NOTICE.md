@@ -8,6 +8,12 @@ Changes made for XcaliburAI (no change to the scientific logic):
 
 - `main.nf`: the input directories come from the `raw_data` and `reference` params
   instead of fixed `raw_data/` and `reference/` folders.
+- `main.nf` and `modules/trimming_qc.nf` (#63): the sample and the mate come from a tag
+  at the end of the file name only (`_R1`/`_R2`, `_1`/`_2`, `_R1_001`, any case), and the
+  rest of the name, dots included, is the sample. `.fq.gz` and any-case extensions are
+  read. `main.nf` passes the mate with each file, so `trimming_qc.nf` no longer re-reads
+  it from the name. The original rule cut the name at the first `.`, removed every `_1`,
+  `_2`, `_R1` and `_R2`, and looked for the mate anywhere in the name.
 - `nextflow.config`: a `params` block with the defaults (`mode`, `raw_data`, `reference`).
 - `modules/pca_phylogeny.nf`: helper scripts are resolved from `${projectDir}/scripts/`,
   so the pipeline runs from any launch directory.
