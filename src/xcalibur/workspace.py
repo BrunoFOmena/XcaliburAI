@@ -6,13 +6,17 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-_RUN_ID = re.compile(r"[A-Za-z0-9_-]+")
+RUN_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]*$"
+_RUN_ID = re.compile(RUN_ID_PATTERN)
 
 
 def validate_run_id(run_id: str) -> str:
     """Return ``run_id`` if it is safe to use in a path; raise ``ValueError`` otherwise."""
     if not isinstance(run_id, str) or _RUN_ID.fullmatch(run_id) is None:
-        raise ValueError(f"Invalid run_id {run_id!r}: use only letters, digits, '_' and '-'.")
+        raise ValueError(
+            f"Invalid run_id {run_id!r}: use only letters, digits, '_' and '-', "
+            "starting with a letter or digit."
+        )
     return run_id
 
 

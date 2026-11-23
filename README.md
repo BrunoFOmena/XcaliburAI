@@ -78,7 +78,7 @@ xcalibur plan <domain> -p KEY=VALUE -i NAME=PATH
 
 **`xcalibur chat`** opens a session with the configured LLM (`xcalibur init` first). The assistant uses tools to list domains, plan a run and read results. Before anything runs it shows the domain, every parameter, the inputs, the run directory and the exact command, and asks `Run it? [y/N]`; the default is always to ask, and only `--yes` (for automation) skips the question. Session commands: `/help`, `/status` (provider, model, workspace, what this session did), `/runs` (runs in the workspace and their status), `/exit` (or Ctrl+D). Ctrl+C stops the current answer and keeps the session. Every tool call is recorded in `<workspace>/sessions/<id>/audit.jsonl`. With `--json`, each answer is printed as one JSON object per line (prompts go to stderr). `--max-steps N` limits model calls per answer. The conversation is not saved for later resumption yet.
 
-**`xcalibur run`** is the deterministic path for scripts and CI: no LLM, the same validation the assistant uses, and provenance in `<workspace>/runs/<run_id>/` (`run-<id>.json`, `nextflow.log`, `nextflow_report.html`). The workflow log is streamed to stderr while it runs; the result goes to stdout. `--json` prints `run_id`, `status`, `returncode`, `command`, `run_dir`, `log_path`, `record_path` and the files found for each declared output. An existing `--run-id` is refused unless `--resume` is given. `--profile NAME` picks a workflow profile (comma-separated), overriding the domain default.
+**`xcalibur run`** is the deterministic path for scripts and CI: no LLM, the same validation the assistant uses, and provenance in `<workspace>/runs/<run_id>/` (`run-<id>.json`, or `run-<id>.attempt-<n>.json` for later attempts, `nextflow.log`, `nextflow_report.html`). The workflow log is streamed to stderr while it runs; the result goes to stdout. `--json` prints `run_id`, `status`, `returncode`, `command`, `run_dir`, `log_path`, `record_path` and the files found for each declared output. An existing `--run-id` is refused unless `--resume` is given. `--profile NAME` picks a workflow profile (comma-separated), overriding the domain default.
 
 Common options: `--workspace DIR` (default: the current directory), `--nextflow PATH` (the Nextflow executable), `--no-color` (or `NO_COLOR=1`; colour is also off when the output is not a terminal).
 
@@ -172,6 +172,12 @@ Parameters are validated against the domain manifest (types, ranges, choices, un
 <summary><b>How do I contribute?</b></summary>
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md). Pull requests always target `homolog`; `main` receives a PR from `homolog`, merged with a merge commit.
+</details>
+
+<details>
+<summary><b>Which operating systems are supported?</b></summary>
+
+Running workflows is supported on **Linux and macOS** only, as Nextflow itself. On Windows, use WSL: there `xcalibur run` and the assistant refuse to execute with a clear error, while `xcalibur plan` and `--dry-run` still work. Ctrl+C (SIGINT) or SIGTERM at any point of a run stops Nextflow and every process it started, marks the run `cancelled` and still writes `run-<id>.json`; pressing Ctrl+C again does not interrupt that cleanup. Processes Nextflow leaves behind when it exits (for example a conda environment still being built after a failure) are stopped too.
 </details>
 
 <br/>

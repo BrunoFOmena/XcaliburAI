@@ -90,7 +90,10 @@ def build_parser() -> argparse.ArgumentParser:
     request.add_argument("domain", help="domain name, as 'xcalibur domains' lists it")
     request.add_argument("-p", "--param", action="append", default=[], metavar="KEY=VALUE")
     request.add_argument("-i", "--input", action="append", default=[], metavar="NAME=PATH")
-    request.add_argument("--run-id", help="run identifier (letters, digits, '_', '-')")
+    request.add_argument(
+        "--run-id",
+        help="run identifier (letters, digits, '_', '-'; starts with a letter or digit)",
+    )
     request.add_argument(
         "--workspace", type=Path, default=None, help="workspace directory (default: current)"
     )

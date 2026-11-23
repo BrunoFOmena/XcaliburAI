@@ -119,6 +119,8 @@ def test_run_human_output_without_colour_when_not_a_terminal(env, capsys):
         (["-p", "threads=99"], "maximum"),
         (["-p", "threads"], "expected KEY=VALUE"),
         (["--run-id", "../escape"], "run_id"),
+        (["--run-id=-x"], "run_id"),  # "=" so argparse hands "-x" to the validation
+        (["--run-id", "_x"], "run_id"),
         (["--resume"], "--resume needs"),
     ],
 )
