@@ -40,7 +40,7 @@ Provenance record  +  Interpretation agents ──▶ report
 | `agents/confirmation.py` | Confirmation policies (`DenyAll` default, `AllowAll`, `CallbackConfirmation`) |
 | `agents/session.py` | `Session`: conversation history and the audit trail of tool calls |
 | `execution/base.py` | Engine-neutral `RunSpec`, `RunResult`, `WorkflowEngine` protocol |
-| `execution/nextflow.py` | Nextflow adapter; builds commands, supports dry runs |
+| `execution/nextflow.py` | Nextflow adapter; builds commands, supports dry runs, executes runs (POSIX only) in their own process group and cancels them on SIGINT/SIGTERM at any point, always writing the record |
 | `llm/base.py` | Provider-agnostic `LLMProvider` (`complete`, `generate` with tool calls, `stream_text`), `Message` with tool calls/results, `ProviderConfig` (keys come from env vars) |
 | `llm/fake.py` | `FakeProvider`: scripted replies for tests and offline development |
 | `llm/anthropic_provider.py` | Anthropic provider on the official SDK (`xcalibur-ai[anthropic]`): system prompt, tools, streaming, bounded retries, clear errors, server-side refusal fallback |
