@@ -155,7 +155,6 @@ from pathlib import Path
 from xcalibur.execution.base import RunSpec
 from xcalibur.execution.nextflow import NextflowEngine
 from xcalibur.manifest import DomainManifest
-from xcalibur.provenance import RunRecord
 from xcalibur.registry import DomainPlugin
 from xcalibur.workspace import Workspace
 wf = {{"entrypoint": "m.nf"}}
@@ -262,6 +261,20 @@ def test_record_says_running_while_the_engine_runs(tmp_path):
         result = engine.run(s)
     assert seen["status"] == "running"
     assert json.loads(result.record_path.read_text())["status"] == "failed"
+
+
+def test_unexpected_error_marks_the_record_failed_and_stops_the_run(tmp_path, monkeypatch):
+    import xcalibur.execution.nextflow as nf
+
+    def broken_wait(proc, cancel):
+        raise RuntimeError("bug while waiting")
+
+    monkeypatch.setattr(nf, "_wait", broken_wait)
+    s = spec(tmp_path, params={"hang": True})
+    with pytest.raises(RuntimeError, match="bug while waiting"):
+        NextflowEngine(fake_nextflow(tmp_path)).run(s)
+    record = json.loads((s.run_dir / f"run-{s.run_id}.json").read_text())
+    assert record["status"] == "failed" and record["finished_at"] is not None
 
 
 def test_report_kept_when_the_process_cannot_start(tmp_path):

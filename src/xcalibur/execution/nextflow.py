@@ -109,6 +109,41 @@ class NextflowEngine:
         record.reserve(run_dir)  # claims the attempt number atomically (status "running")
         attempt = record.attempt
 
+        try:
+            status, returncode = self._launch(spec, command, cancel, run_dir, log_path, attempt)
+        except BaseException:
+            # Anything unexpected (an OSError on the log or the report, a bug while waiting):
+            # the record must not stay "running" forever. Mark it failed, then re-raise.
+            record.status = "failed"
+            record.finished_at = datetime.now(UTC)
+            record.write(run_dir)
+            raise
+
+        record.status = status
+        record.returncode = returncode
+        record.finished_at = datetime.now(UTC)
+        record_path = record.write(run_dir)
+        return RunResult(
+            run_id=spec.run_id,
+            status=status,  # type: ignore[arg-type]
+            command=command,
+            returncode=returncode,
+            log_path=log_path,
+            run_dir=run_dir,
+            record_path=record_path,
+        )
+
+
+    def _launch(
+        self,
+        spec: RunSpec,
+        command: list[str],
+        cancel: _CancelRequest,
+        run_dir: Path,
+        log_path: Path,
+        attempt: int,
+    ) -> tuple[str, int | None]:
+        """Start Nextflow and wait for it; return ``(status, returncode)``."""
         status = "failed"
         returncode: int | None = None
         with log_path.open("a" if attempt > 1 else "w", encoding="utf-8") as log:
@@ -153,20 +188,7 @@ class NextflowEngine:
                         log.write("xcalibur: run cancelled (SIGINT/SIGTERM)\n")
                     else:
                         status = "succeeded" if returncode == 0 else "failed"
-
-        record.status = status
-        record.returncode = returncode
-        record.finished_at = datetime.now(UTC)
-        record_path = record.write(run_dir)
-        return RunResult(
-            run_id=spec.run_id,
-            status=status,  # type: ignore[arg-type]
-            command=command,
-            returncode=returncode,
-            log_path=log_path,
-            run_dir=run_dir,
-            record_path=record_path,
-        )
+        return status, returncode
 
 
 def supports_execution() -> bool:
