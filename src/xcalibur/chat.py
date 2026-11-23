@@ -146,6 +146,10 @@ class ChatApp:
             lines.append(f"  {s('accent', 'run dir')}  {d['run_dir']}")
         if d.get("profile"):
             lines.append(f"  {s('accent', 'profile')}  {d['profile']}")
+        check = d.get("input_check") or {}
+        if check.get("overview"):
+            lines.append(f"  {s('accent', 'detected')} {check['overview']}")
+        lines += [s("warn", f"  warning  {w['message']}") for w in check.get("warnings", [])]
         lines.append(f"  {s('accent', 'command')}  {request.summary}")
         return "\n".join(lines)
 

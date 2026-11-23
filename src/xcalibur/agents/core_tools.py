@@ -21,6 +21,7 @@ from xcalibur.execution.base import (
     WorkflowEngine,
 )
 from xcalibur.execution.nextflow import NextflowEngine
+from xcalibur.inputs import InputReport
 from xcalibur.manifest import ManifestError
 from xcalibur.provenance import RunRecord
 from xcalibur.registry import DomainPlugin, DomainRegistry
@@ -103,13 +104,13 @@ def describe_domain(args: DomainArgs, ctx: ToolContext) -> dict[str, Any]:
 
 
 def plan_run(args: RunArgs, ctx: ToolContext) -> dict[str, Any]:
-    spec = _spec(args, ctx, dry_run=True)
-    return _describe(spec, _engine(ctx))
+    spec, report = _spec(args, ctx, dry_run=True)
+    return _describe(spec, _engine(ctx), report)
 
 
 def preview_run(args: RunArgs, ctx: ToolContext) -> dict[str, Any]:
-    spec = _spec(args, ctx, dry_run=False)
-    return _describe(spec, _engine(ctx))
+    spec, report = _spec(args, ctx, dry_run=False)
+    return _describe(spec, _engine(ctx), report)
 
 
 def run_pipeline(args: RunArgs, ctx: ToolContext) -> dict[str, Any]:
@@ -117,7 +118,7 @@ def run_pipeline(args: RunArgs, ctx: ToolContext) -> dict[str, Any]:
         raise ToolError(
             "run_pipeline runs only with a plan the user approved.", kind="not_confirmed"
         )
-    spec = _spec(args, ctx, dry_run=False)
+    spec, _ = _spec(args, ctx, dry_run=False)
     engine = _engine(ctx)
     try:
         command = engine.build_command(spec)
@@ -290,7 +291,9 @@ def _plugin(ctx: ToolContext, name: str) -> DomainPlugin:
         raise ToolError(exc.args[0], kind="unknown_domain", available=ctx.domains.names()) from None
 
 
-def _spec(args: RunArgs, ctx: ToolContext, dry_run: bool) -> RunSpec:
+def _spec(
+    args: RunArgs, ctx: ToolContext, dry_run: bool
+) -> tuple[RunSpec, InputReport | None]:
     plugin = _plugin(ctx, args.domain)
     manifest = plugin.manifest
     try:
@@ -330,7 +333,8 @@ def _spec(args: RunArgs, ctx: ToolContext, dry_run: bool) -> RunSpec:
             )
     elif ctx.workspace is not None:
         workspace = ctx.workspace
-    return RunSpec(
+    report = _check_inputs(plugin, inputs)
+    spec = RunSpec(
         plugin=plugin,
         params=params,
         inputs=inputs,
@@ -340,6 +344,32 @@ def _spec(args: RunArgs, ctx: ToolContext, dry_run: bool) -> RunSpec:
         resume=args.resume,
         profile=args.profile,
     )
+    return spec, report
+
+
+def _check_inputs(plugin: DomainPlugin, inputs: dict[str, Path]) -> InputReport | None:
+    """Run the domain's input check, if it has one; errors stop the plan or the run."""
+    if plugin.validate_inputs is None:
+        return None
+    try:
+        report = plugin.validate_inputs(dict(inputs))
+    except OSError as exc:
+        # A validator should report unreadable paths itself; this is the safety net.
+        raise ToolError(
+            f"cannot read the inputs: {exc}", kind="invalid_inputs"
+        ) from None
+    if not report.ok:
+        problems = " | ".join(issue.message for issue in report.errors)
+        count = len(report.errors)
+        details: dict[str, Any] = {"errors": [issue.as_dict() for issue in report.errors]}
+        if report.warnings:
+            details["warnings"] = [issue.as_dict() for issue in report.warnings]
+        raise ToolError(
+            f"{count} problem{'s' if count > 1 else ''} in the inputs: {problems}",
+            kind="invalid_inputs",
+            **details,
+        )
+    return report
 
 
 def _resolve(base: Path, raw: str) -> Path:
@@ -347,12 +377,14 @@ def _resolve(base: Path, raw: str) -> Path:
     return (path if path.is_absolute() else base / path).absolute()
 
 
-def _describe(spec: RunSpec, engine: WorkflowEngine) -> dict[str, Any]:
+def _describe(
+    spec: RunSpec, engine: WorkflowEngine, report: InputReport | None = None
+) -> dict[str, Any]:
     try:
         command = engine.build_command(spec)
     except ValueError as exc:
         raise ToolError(str(exc), kind="invalid_params") from None
-    return {
+    described = {
         "domain": spec.plugin.name,
         "run_id": spec.run_id,
         "params": spec.params,
@@ -364,6 +396,9 @@ def _describe(spec: RunSpec, engine: WorkflowEngine) -> dict[str, Any]:
         "command_text": shlex.join(command),
         "run_dir": spec.run_dir.absolute() if spec.workspace is not None else None,
     }
+    if report is not None:
+        described["input_check"] = report.as_dict()
+    return described
 
 
 def _latest_record(ctx: ToolContext, run_id: str) -> tuple[Path, RunRecord | None, int]:

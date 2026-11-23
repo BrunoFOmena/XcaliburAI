@@ -98,12 +98,12 @@ The model is also instructed to call `plan_run` and explain the plan (domain, pa
 |---|---|---|
 | `list_domains` | none | Installed domains (name, display name, version, description) |
 | `describe_domain` | `domain` | Inputs, parameters (types, defaults, choices, limits), outputs and agents |
-| `plan_run` | `domain`, `params`, `inputs`, `run_id?`, `resume?`, `profile?` | Validates against the manifest and returns the exact command; runs nothing |
+| `plan_run` | `domain`, `params`, `inputs`, `run_id?`, `resume?`, `profile?` | Validates against the manifest and the domain's input check, and returns the exact command (plus `input_check` when the domain has one); runs nothing |
 | `run_pipeline` | same as `plan_run` | Needs confirmation; checks that input paths exist and that `run_id` is new (unless `resume`), then runs in the workspace |
 | `get_run_status` | `run_id` | Latest attempt's status, return code, command and the last log lines |
 | `read_results` | `run_id` | Files matching each output declared in the manifest, with sizes |
 
-Relative input paths are resolved against the workspace root (the current directory for `plan_run` without a workspace). Input paths are **not** confined to the workspace: absolute paths, `~` and `..` are accepted, because data often lives elsewhere. The command stays safe (paths are made absolute and passed as separate arguments) and the confirmation shows every input path; checks specific to a domain's data belong to the domain package. Parameters go through `DomainManifest.resolve_params` (unknown or out-of-range values are errors). Domain-specific input checks belong to the domain package.
+Relative input paths are resolved against the workspace root (the current directory for `plan_run` without a workspace). Input paths are **not** confined to the workspace: absolute paths, `~` and `..` are accepted, because data often lives elsewhere. The command stays safe (paths are made absolute and passed as separate arguments) and the confirmation shows every input path; checks specific to a domain's data belong to the domain package, through the `validate_inputs` hook ([DOMAIN_PACKAGES.md](DOMAIN_PACKAGES.md#input-validation-hook)); its errors come back as `invalid_inputs` with an `errors` list the model can act on. Parameters go through `DomainManifest.resolve_params` (unknown or out-of-range values are errors).
 
 ## Domain tools and agents
 
