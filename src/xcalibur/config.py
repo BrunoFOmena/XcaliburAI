@@ -100,13 +100,15 @@ def load_llm_config(location: ConfigLocation | Path) -> ProviderConfig:
     if not path.exists():
         raise LLMConfigError(f"No configuration at {path}; run 'xcalibur init'.")
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise LLMConfigError(f"Could not read {path}: {exc.strerror or exc}.") from None
     except UnicodeDecodeError:
         raise LLMConfigError(f"{path} is not a UTF-8 text file.") from None
+    try:
+        data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
-        raise LLMConfigError(f"{path} is not valid YAML: {exc}.") from None
+        raise LLMConfigError(_yaml_error_message(path, text, exc)) from None
     llm = data.get("llm") if isinstance(data, dict) else None
     if not isinstance(llm, dict):
         raise LLMConfigError(f"{path} has no 'llm' section; run 'xcalibur init'.")
@@ -117,6 +119,23 @@ def load_llm_config(location: ConfigLocation | Path) -> ProviderConfig:
     if not location.trusted:
         check_workspace_settings(config, str(path))
     return config
+
+
+def _yaml_error_message(path: Path, text: str, exc: yaml.YAMLError) -> str:
+    """One line with the line and column (1-based) instead of PyYAML's multi-line text."""
+    mark = getattr(exc, "problem_mark", None)
+    problem = getattr(exc, "problem", None)
+    if mark is not None and problem:
+        return f"{path}:{mark.line + 1}:{mark.column + 1}: invalid YAML ({problem})"
+    if isinstance(exc, yaml.reader.ReaderError) and isinstance(exc.character, int):
+        # A character YAML does not allow: only an offset into the text, no mark.
+        pos = exc.position
+        line = text.count("\n", 0, pos) + 1
+        column = pos - (text.rfind("\n", 0, pos) + 1) + 1
+        problem = f"unacceptable character #x{exc.character:04x}: {exc.reason}"
+        return f"{path}:{line}:{column}: invalid YAML ({problem})"
+    detail = " ".join(str(exc).split())
+    return f"{path}: invalid YAML ({detail})"
 
 
 def check_workspace_settings(config: ProviderConfig, where: str) -> None:

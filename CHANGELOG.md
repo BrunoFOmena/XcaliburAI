@@ -26,6 +26,7 @@ All notable changes are documented here. Format: [Keep a Changelog](https://keep
 - ECHOLAS `nextflow.config` enables conda with `conda.enabled = true` instead of `process.conda = true`, which made processes without their own environment ask for a package named `true` (#11).
 
 ### Changed
+- An invalid `xcalibur.yaml` is reported on one line with the 1-based line and column, e.g. `error: xcalibur.yaml:2:1: invalid YAML (expected the node content, but found '<stream end>')`, instead of PyYAML's multi-line text with a `^` marker; still exit code 2, no traceback (#39).
 - The provenance record is written when the run starts, with `status: "running"`, and rewritten with the outcome at the end (an unexpected error after it is created marks it `failed` before being re-raised, so it never stays `running`); `read_results` refuses a run that is still running (#32).
 - `xcalibur plan` shares the validation of `run` (inputs resolved against `--workspace`) and gains `--json`, `--run-id`, `--workspace` and `--nextflow`; a malformed `KEY=VALUE` now exits with code 2 and the CLI never prints a traceback (#10).
 - `Message` carries tool calls (assistant) and tool results (user), sent to Anthropic as `tool_use`/`tool_result` blocks; `AgentSpec` gains `instructions` and `tools`; `RunRecord.filename_for` is public (#8).

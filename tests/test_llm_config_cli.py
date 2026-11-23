@@ -154,7 +154,7 @@ BASE = "llm:\n  provider: anthropic\n  model: m\n"
 @pytest.mark.parametrize(
     "content, message",
     [
-        ("llm: [", "not valid YAML"),
+        ("llm: [", "invalid YAML"),
         ("- a\n- b\n", "no 'llm' section"),
         ("llm:\n  provider: anthropic\n", "missing llm settings model"),
         (BASE + "  max_tokens: abc\n", "'max_tokens' must be int"),
@@ -170,6 +170,32 @@ def test_invalid_config_is_a_clear_error_without_traceback(tmp_path, capsys, con
     assert cli.main(["check-llm", "--config", str(path)]) == 2
     err = capsys.readouterr().err
     assert message in err and "Traceback" not in err
+
+
+@pytest.mark.parametrize(
+    "content, where, problem",
+    [
+        ("llm: [", "1:7", "expected the node content, but found '<stream end>'"),
+        ("llm:\n  a: 1\n b: 2\n", "3:2", "expected <block end>, but found '<block mapping start>'"),
+    ],
+)
+def test_invalid_yaml_is_one_line_with_line_and_column(tmp_path, capsys, content, where, problem):
+    path = tmp_path / "bad.yaml"
+    path.write_text(content)
+    assert cli.main(["check-llm", "--config", str(path)]) == 2
+    err = capsys.readouterr().err
+    assert err == f"error: {path}:{where}: invalid YAML ({problem})\n"
+
+
+def test_disallowed_character_reports_line_and_column(tmp_path, capsys):
+    path = tmp_path / "bad.yaml"
+    path.write_text("llm:\n  model: a\x07\n")
+    assert cli.main(["check-llm", "--config", str(path)]) == 2
+    err = capsys.readouterr().err
+    assert err == (
+        f"error: {path}:2:11: invalid YAML "
+        "(unacceptable character #x0007: special characters are not allowed)\n"
+    )
 
 
 def test_non_utf8_config_is_a_clear_error(tmp_path, capsys):
