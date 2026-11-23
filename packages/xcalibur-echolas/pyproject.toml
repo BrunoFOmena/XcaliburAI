@@ -17,4 +17,4 @@ echolas = "xcalibur_echolas:plugin"
 where = ["src"]
 
 [tool.setuptools.package-data]
-xcalibur_echolas = ["manifest.yaml", "workflow/*", "workflow/**/*"]
+xcalibur_echolas = ["manifest.yaml", "prompts/*.md", "workflow/*", "workflow/**/*"]

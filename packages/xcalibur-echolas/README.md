@@ -24,3 +24,22 @@ The pipeline (`main.nf`) and the check (`validation.py`) use the same two patter
 
 Ignored: hidden files, the `_disabled/` folder and other subfolders (the pipeline does not read them; other subfolders give a warning), and files that are not FASTQ (warning). The check reads names, sizes and the first two bytes of each FASTQ (gzip signature) only.
 
+## Agents and tools
+
+| Agent | Role | Instructions | Tools |
+|---|---|---|---|
+| `echolas_executor` | execution | [`prompts/executor.md`](src/xcalibur_echolas/prompts/executor.md) | `describe_domain`, `plan_run`, `run_pipeline` (asks the user), `get_run_status`, `read_results` |
+| `echolas_interpreter` | interpretation | [`prompts/interpreter.md`](src/xcalibur_echolas/prompts/interpreter.md) | `get_run_status`, `read_results` and the four tools below; it cannot run anything |
+
+The executor validates the inputs through `plan_run` (the input check of this package) and does not run when they are invalid; it explains each error with its fix.
+
+Result tools (agents see them as `echolas__<name>`). They read a finished run of the workspace by `run_id`, never leave the run directory and are *grounded*: every number the answer gives about the results must come from them, and an answer with an untraced number is corrected once and otherwise flagged.
+
+| Tool | Reads | Returns |
+|---|---|---|
+| `summarize_run` | all of the below | Everything at once, plus the caveats that apply |
+| `summarize_vcf` | `final` (PASS), `pca` or `phylo` VCF | Samples, variants by type and filter, multiallelic sites, per-contig counts, per-sample hom-ref/het/hom-alt/missing |
+| `read_pca` | `.eigenval`, `.eigenvec` (PLINK) | Eigenvalues, each PC's share of the computed PCs, PC1/PC2 per sample |
+| `read_tree` | `.treefile` (IQ-TREE) | Leaves, splits (bipartitions) with SH-aLRT/UFBoot, supported or not (SH-aLRT >= 80 and UFBoot >= 95), branch lengths, total length |
+
+Caveats are decided by the tool, not the model: fewer than 10 samples, samples with more than 20% missing genotypes, no heterozygous calls, PCA shares of a partial set of PCs, unsupported splits, branch lengths inflated by SNP-only data without ascertainment correction (#52), and diploid calling of an often aneuploid organism. The readers use only the Python standard library and stream large VCFs; long lists are cut at 50 items (200 for samples), with the count of what was left out.
