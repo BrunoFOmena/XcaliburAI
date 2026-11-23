@@ -14,7 +14,12 @@ from typing import Any
 from pydantic import Field
 
 from xcalibur.agents.tools import Tool, ToolContext, ToolError, ToolInput, ToolRegistry
-from xcalibur.execution.base import EngineNotFoundError, RunSpec, WorkflowEngine
+from xcalibur.execution.base import (
+    EngineNotFoundError,
+    RunSpec,
+    UnsupportedPlatformError,
+    WorkflowEngine,
+)
 from xcalibur.execution.nextflow import NextflowEngine
 from xcalibur.manifest import ManifestError
 from xcalibur.provenance import RunRecord
@@ -129,6 +134,8 @@ def run_pipeline(args: RunArgs, ctx: ToolContext) -> dict[str, Any]:
         result = engine.run(spec)
     except EngineNotFoundError as exc:
         raise ToolError(str(exc), kind="engine_not_found") from None
+    except UnsupportedPlatformError as exc:
+        raise ToolError(str(exc), kind="unsupported_platform") from None
     except ValueError as exc:
         raise ToolError(str(exc), kind="invalid_run") from None
     return {

@@ -174,6 +174,12 @@ Parameters are validated against the domain manifest (types, ranges, choices, un
 Read [CONTRIBUTING.md](CONTRIBUTING.md). Pull requests always target `homolog`; `main` receives a PR from `homolog`, merged with a merge commit.
 </details>
 
+<details>
+<summary><b>Which operating systems are supported?</b></summary>
+
+Running workflows is supported on **Linux and macOS** only, as Nextflow itself. On Windows, use WSL: there `xcalibur run` and the assistant refuse to execute with a clear error, while `xcalibur plan` and `--dry-run` still work. Ctrl+C (SIGINT) or SIGTERM at any point of a run stops Nextflow and every process it started, marks the run `cancelled` and still writes `run-<id>.json`; pressing Ctrl+C again does not interrupt that cleanup. Processes Nextflow leaves behind when it exits (for example a conda environment still being built after a failure) are stopped too.
+</details>
+
 <br/>
 
 # 🌿 Branching & Versioning
