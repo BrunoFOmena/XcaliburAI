@@ -187,15 +187,36 @@ def test_invalid_yaml_is_one_line_with_line_and_column(tmp_path, capsys, content
     assert err == f"error: {path}:{where}: invalid YAML ({problem})\n"
 
 
-def test_disallowed_character_reports_line_and_column(tmp_path, capsys):
+@pytest.mark.parametrize(
+    "content, where",
+    [
+        ("llm:\n  model: a\x07\n", "2:11"),
+        ("llm:\r\n  model: a\x07\r\n", "2:11"),
+        ("\ufeffllm: \x07\n", "1:6"),
+        ("llm:\u2028  model: a\x07\n", "2:11"),
+        ("llm:\x85\u2029  model: a\x07\n", "3:11"),
+    ],
+)
+def test_disallowed_character_reports_line_and_column(tmp_path, capsys, content, where):
     path = tmp_path / "bad.yaml"
-    path.write_text("llm:\n  model: a\x07\n")
+    path.write_bytes(content.encode("utf-8"))
     assert cli.main(["check-llm", "--config", str(path)]) == 2
     err = capsys.readouterr().err
     assert err == (
-        f"error: {path}:2:11: invalid YAML "
+        f"error: {path}:{where}: invalid YAML "
         "(unacceptable character #x0007: special characters are not allowed)\n"
     )
+
+
+def test_yaml_error_without_position_is_one_line(tmp_path, capsys, monkeypatch):
+    def fail(_text):
+        raise yaml.YAMLError("first line\n  second line")
+
+    monkeypatch.setattr(yaml, "safe_load", fail)
+    path = tmp_path / "bad.yaml"
+    path.write_text("llm: {}\n")
+    assert cli.main(["check-llm", "--config", str(path)]) == 2
+    assert capsys.readouterr().err == f"error: {path}: invalid YAML (first line second line)\n"
 
 
 def test_non_utf8_config_is_a_clear_error(tmp_path, capsys):
