@@ -4,7 +4,8 @@ name: branch-policy
 #   work branch --PR--> homolog  (review, merge, test)
 #   homolog --PR (merge commit)--> main
 #
-#   - PRs into homolog: any branch except main and promote/*.
+#   - PRs into homolog: any branch except main and promote/*, and never
+#     bringing a commit of main (e.g. a work branch that merged main) (#33).
 #   - PRs into main: only from the homolog branch of this repository.
 
 on:
@@ -40,9 +41,9 @@ jobs:
             .github/scripts/check-promotion.sh "$BASE_SHA" "$HEAD_SHA" "$HEAD"
           fi
           if [ "$BASE" = "homolog" ]; then
-            case "$HEAD" in
-              main|promote/*)
-                echo "::error::'$HEAD' must never be merged into 'homolog'."; exit 1 ;;
-            esac
+            git fetch --no-tags --quiet origin \
+              +refs/heads/main:refs/remotes/origin/main \
+              +refs/heads/homolog:refs/remotes/origin/homolog
+            .github/scripts/check-homolog-pr.sh "$BASE_SHA" "$HEAD_SHA" "$HEAD" origin/main origin/homolog
           fi
           echo "Branch policy OK"
