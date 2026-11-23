@@ -1,8 +1,8 @@
 """Command-line entry point.
 
 Exit codes: 0 success, 1 execution failure (or an unexpected error), 2 wrong usage or
-invalid parameters, 130 interrupted. Errors are printed as one line, never as a traceback
-(set ``XCALIBUR_DEBUG=1`` to see it).
+invalid parameters, 130 interrupted. Errors are printed as one line (input problems found by
+a domain's check, one line each), never as a traceback (set ``XCALIBUR_DEBUG=1`` to see it).
 """
 
 from __future__ import annotations
@@ -368,12 +368,28 @@ def _print_run(result: dict[str, Any], outputs: dict[str, Any] | None, style: St
 
 def _tool_failure(args: argparse.Namespace, exc: ToolError) -> int:
     code = EXIT_USAGE if exc.kind in USAGE_ERRORS else EXIT_FAILED
-    return _report_error(args, exc.kind, str(exc), code)
+    issues = exc.details.get("errors")
+    if issues and not getattr(args, "json", False):
+        # Input problems: one line each, so a folder with many bad files stays readable.
+        count = len(issues)
+        lines = [f"{count} problem{'s' if count > 1 else ''} in the inputs:"]
+        lines += [f"  - {issue['message']}" for issue in issues]
+        return _report_error(args, exc.kind, "\n".join(lines), code)
+    return _report_error(args, exc.kind, str(exc), code, exc.details)
 
 
-def _report_error(args: argparse.Namespace, kind: str, message: str, code: int) -> int:
+def _report_error(
+    args: argparse.Namespace,
+    kind: str,
+    message: str,
+    code: int,
+    details: dict[str, Any] | None = None,
+) -> int:
     if getattr(args, "json", False):
-        _print_json({"status": "error", "error": {"type": kind, "message": message}})
+        error: dict[str, Any] = {"type": kind, "message": message}
+        # Structured details (e.g. the list of input errors) after the fixed keys.
+        error.update({k: v for k, v in (details or {}).items() if k not in error})
+        _print_json({"status": "error", "error": error})
     style = Style(color_enabled(sys.stderr, getattr(args, "no_color", False)))
     print(style("error", f"error: {message}"), file=sys.stderr)
     return code

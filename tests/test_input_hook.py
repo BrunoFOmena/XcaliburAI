@@ -70,6 +70,27 @@ def test_errors_stop_plan_and_run_with_structured_details(tmp_path, step):
     assert error.details["warnings"] == [{"code": "odd", "message": "a warning"}]
 
 
+def test_validator_io_errors_become_input_errors(tmp_path):
+    def validator(inputs):
+        raise PermissionError(13, "Permission denied", str(inputs["reads"]))
+
+    with pytest.raises(ToolError) as caught:
+        plan_run(RunArgs(domain="demo", inputs={"reads": "r"}), context(tmp_path, validator))
+    assert caught.value.kind == "invalid_inputs"
+    assert "Permission denied" in str(caught.value)
+
+
+def test_no_warnings_key_without_warnings(tmp_path):
+    def validator(inputs):
+        report = InputReport()
+        report.error("bad", "problem")
+        return report
+
+    with pytest.raises(ToolError) as caught:
+        plan_run(RunArgs(domain="demo", inputs={"reads": "r"}), context(tmp_path, validator))
+    assert "warnings" not in caught.value.details
+
+
 def test_chat_confirmation_shows_what_the_check_detected(tmp_path):
     from xcalibur.chat import ChatApp
     from xcalibur.terminal import Style

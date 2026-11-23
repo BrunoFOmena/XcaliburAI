@@ -301,7 +301,33 @@ def test_plan_aborts_with_exit_2_on_invalid_inputs(tmp_path, capsys):
     assert run_plan(inputs, tmp_path, "--json") == 2
     error = json.loads(capsys.readouterr().out)["error"]
     assert error["type"] == "invalid_inputs"
+    assert [e["code"] for e in error["errors"]] == ["mate_missing"]
+    assert error["errors"][0]["sample"] == "A"
+    assert "warnings" not in error
     assert not (tmp_path / "runs").exists()
+
+
+def test_each_input_problem_gets_its_own_line(tmp_path, capsys):
+    inputs = make(tmp_path, ["A_R1.fastq.gz", "B_R2.fastq.gz"], genomes=())
+    assert run_plan(inputs, tmp_path) == 2
+    err = capsys.readouterr().err.splitlines()
+    assert err[0] == "error: 3 problems in the inputs:"
+    assert len(err) == 4 and all(line.startswith("  - ") for line in err[1:])
+
+
+@pytest.mark.skipif(os.name == "nt" or os.geteuid() == 0, reason="needs POSIX permissions")
+@pytest.mark.parametrize("mode", [0o000, 0o600])  # no access; read but no search (x)
+def test_unreadable_folder_is_an_input_error(tmp_path, capsys, mode):
+    inputs = make(tmp_path, ["A.fastq.gz"])
+    inputs["raw_data"].chmod(mode)
+    try:
+        report = validate_inputs(inputs)
+        assert codes(report) == ["unreadable"]
+        assert "permissions" in report.errors[0].message
+        assert run_plan(inputs, tmp_path) == 2
+        assert "Cannot read" in capsys.readouterr().err
+    finally:
+        inputs["raw_data"].chmod(0o755)
 
 
 def test_run_refuses_invalid_inputs_before_starting(tmp_path, capsys):

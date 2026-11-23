@@ -89,7 +89,10 @@ def _check_reference(path: Path | None, report: InputReport) -> dict[str, Any] |
                      report)
     if folder is None:
         return None
-    files = _top_level_files(folder)
+    listing = _list_folder(folder, "reference", report)
+    if listing is None:
+        return None
+    files, _ = listing
     genomes = [f for f in files if f.name.endswith(REFERENCE_SUFFIXES)]
     if not genomes:
         near = [f.name for f in files if _REFERENCE_LIKE.search(f.name)]
@@ -121,15 +124,19 @@ def _check_reads(path: Path | None, report: InputReport) -> list[dict[str, Any]]
     folder = _folder(path, "raw_data", "the folder with the .fastq.gz files", report)
     if folder is None:
         return []
+    listing = _list_folder(folder, "raw_data", report)
+    if listing is None:
+        return []
+    files, subfolders = listing
 
-    for sub in sorted(p for p in folder.iterdir() if p.is_dir() and not _hidden(p)):
+    for sub in subfolders:
         if sub.name not in IGNORED_DIRS:
             report.warn("subfolder_ignored",
                         f"The pipeline does not read subfolders: files in {sub} are ignored.",
                         input="raw_data", path=sub)
 
     groups: dict[str, list[tuple[Path, str]]] = {}
-    for file in _top_level_files(folder):
+    for file in files:
         name = file.name
         if not name.endswith(FASTQ_SUFFIX):
             if _FASTQ_LIKE.search(name):
@@ -271,16 +278,32 @@ def _folder(path: Path | None, name: str, what: str, report: InputReport) -> Pat
     return path
 
 
-def _top_level_files(folder: Path) -> list[Path]:
-    """Visible entries of ``folder`` that are (or point to) files, sorted by name.
+def _list_folder(
+    folder: Path, name: str, report: InputReport
+) -> tuple[list[Path], list[Path]] | None:
+    """Visible files (or links to files) and subfolders of ``folder``, sorted by name.
 
     Nextflow globs skip hidden files and do not descend into subfolders; neither do we.
-    Broken links are kept so that they are reported.
+    Broken links count as files so that they are reported. A folder that cannot be
+    listed (no read or search permission, for example) is an error, not an exception.
     """
-    return sorted(
-        p for p in folder.iterdir()
-        if not _hidden(p) and (p.is_file() or (p.is_symlink() and not p.exists()))
-    )
+    files: list[Path] = []
+    subfolders: list[Path] = []
+    try:
+        for entry in sorted(folder.iterdir()):
+            if _hidden(entry):
+                continue
+            if entry.is_dir():
+                subfolders.append(entry)
+            elif entry.is_file() or (entry.is_symlink() and not entry.exists()):
+                files.append(entry)
+    except OSError as exc:
+        report.error("unreadable",
+                     f"Cannot read the folder {folder}: {exc.strerror or exc}. Check its "
+                     "permissions (it needs read and execute/search access).",
+                     input=name, path=folder)
+        return None
+    return files, subfolders
 
 
 def _file_size(file: Path, name: str, report: InputReport) -> int | None:

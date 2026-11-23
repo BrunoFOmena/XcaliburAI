@@ -351,15 +351,23 @@ def _check_inputs(plugin: DomainPlugin, inputs: dict[str, Path]) -> InputReport 
     """Run the domain's input check, if it has one; errors stop the plan or the run."""
     if plugin.validate_inputs is None:
         return None
-    report = plugin.validate_inputs(dict(inputs))
+    try:
+        report = plugin.validate_inputs(dict(inputs))
+    except OSError as exc:
+        # A validator should report unreadable paths itself; this is the safety net.
+        raise ToolError(
+            f"cannot read the inputs: {exc}", kind="invalid_inputs"
+        ) from None
     if not report.ok:
         problems = " | ".join(issue.message for issue in report.errors)
         count = len(report.errors)
+        details: dict[str, Any] = {"errors": [issue.as_dict() for issue in report.errors]}
+        if report.warnings:
+            details["warnings"] = [issue.as_dict() for issue in report.warnings]
         raise ToolError(
             f"{count} problem{'s' if count > 1 else ''} in the inputs: {problems}",
             kind="invalid_inputs",
-            errors=[issue.as_dict() for issue in report.errors],
-            warnings=[issue.as_dict() for issue in report.warnings] or None,
+            **details,
         )
     return report
 
