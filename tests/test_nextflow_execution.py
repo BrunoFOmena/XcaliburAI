@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from xcalibur.execution.base import EngineNotFoundError, RunSpec
+from xcalibur.execution import nextflow
+from xcalibur.execution.base import EngineNotFoundError, RunSpec, UnsupportedPlatformError
 from xcalibur.execution.nextflow import NextflowEngine
 from xcalibur.manifest import DomainManifest
 from xcalibur.registry import DomainPlugin
@@ -22,6 +23,7 @@ fi
 echo "args: $@"
 case "$*" in *--fail*) echo "boom" >&2; exit 3;; esac
 case "$*" in *--hang*) sleep 30;; esac
+case "$*" in *--leak*) sleep 30 & echo "left $!"; exit 1;; esac
 exit 0
 """
 
@@ -224,3 +226,117 @@ def test_profile_overrides_the_manifest_default(tmp_path):
     assert NextflowEngine().build_command(RunSpec(**base))[3:5] == ["-profile", "standard"]
     cmd = NextflowEngine().build_command(RunSpec(**base, profile="test"))
     assert cmd[3:5] == ["-profile", "test"] and "standard" not in cmd
+
+
+# -- cancellation lifecycle (#20) --------------------------------------------------------
+
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="posix signals")
+
+
+def group_is_gone(pgid: int, timeout: float = 5.0) -> bool:
+    """True once no process (Nextflow or a child it started) is left in the group."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def track_start(monkeypatch, interrupt: bool) -> list[int]:
+    """Record the run's pid; with ``interrupt``, send SIGINT to ourselves right after the
+    run's Popen returns, which was the race window before #20."""
+    started: list[int] = []
+    real_popen = subprocess.Popen
+
+    def popen(cmd, *args, **kwargs):
+        proc = real_popen(cmd, *args, **kwargs)
+        if list(cmd[1:2]) == ["run"]:
+            started.append(proc.pid)
+            if interrupt:
+                os.kill(os.getpid(), signal.SIGINT)
+        return proc
+
+    monkeypatch.setattr(nextflow.subprocess, "Popen", popen)
+    return started
+
+
+@posix_only
+@pytest.mark.parametrize("attempt", range(5))
+def test_signal_right_after_start_cancels_and_leaves_no_orphan(tmp_path, monkeypatch, attempt):
+    before = signal.getsignal(signal.SIGINT), signal.getsignal(signal.SIGTERM)
+    started = track_start(monkeypatch, interrupt=True)
+    result = NextflowEngine(fake_nextflow(tmp_path)).run(spec(tmp_path, params={"hang": True}))
+    assert result.status == "cancelled"
+    assert json.loads(result.record_path.read_text())["status"] == "cancelled"
+    assert "run cancelled" in result.log_path.read_text()
+    assert len(started) == 1 and group_is_gone(started[0])
+    assert (signal.getsignal(signal.SIGINT), signal.getsignal(signal.SIGTERM)) == before
+
+
+@posix_only
+def test_signal_before_start_cancels_without_starting_nextflow(tmp_path, monkeypatch):
+    engine = NextflowEngine(fake_nextflow(tmp_path))
+    started = track_start(monkeypatch, interrupt=False)
+
+    def version():  # Ctrl+C while the engine version is read (a JVM start-up)
+        os.kill(os.getpid(), signal.SIGINT)
+        return "version 24.04.0"
+
+    monkeypatch.setattr(engine, "version", version)
+    result = engine.run(spec(tmp_path, params={"hang": True}))
+    assert result.status == "cancelled" and result.returncode is None
+    assert started == []
+    assert "args: run" not in result.log_path.read_text()
+    assert json.loads(result.record_path.read_text())["status"] == "cancelled"
+
+
+@posix_only
+def test_second_interrupt_does_not_stop_the_cleanup(tmp_path, monkeypatch):
+    started = track_start(monkeypatch, interrupt=True)
+    real_signal_group = nextflow._signal_group
+
+    def impatient(proc, sig):  # Ctrl+C again while xcalibur stops Nextflow
+        os.kill(os.getpid(), signal.SIGINT)
+        real_signal_group(proc, sig)
+
+    monkeypatch.setattr(nextflow, "_signal_group", impatient)
+    result = NextflowEngine(fake_nextflow(tmp_path)).run(spec(tmp_path, params={"hang": True}))
+    assert result.status == "cancelled"
+    assert json.loads(result.record_path.read_text())["status"] == "cancelled"
+    assert group_is_gone(started[0])
+
+
+@posix_only
+def test_unexpected_error_while_waiting_still_stops_the_group(tmp_path, monkeypatch):
+    started = track_start(monkeypatch, interrupt=False)
+
+    def broken_wait(proc, cancel):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(nextflow, "_wait", broken_wait)
+    with pytest.raises(RuntimeError, match="boom"):
+        NextflowEngine(fake_nextflow(tmp_path)).run(spec(tmp_path, params={"hang": True}))
+    assert group_is_gone(started[0])
+
+
+@posix_only
+def test_processes_left_behind_by_nextflow_are_stopped(tmp_path, monkeypatch):
+    """Nextflow can fail and exit while a task it started (a conda build) still runs."""
+    started = track_start(monkeypatch, interrupt=False)
+    result = NextflowEngine(fake_nextflow(tmp_path)).run(spec(tmp_path, params={"leak": True}))
+    assert result.status == "failed" and result.returncode == 1
+    assert "left " in result.log_path.read_text()
+    assert group_is_gone(started[0], timeout=1.0)
+
+
+def test_platform_without_process_groups_gets_a_clear_error(tmp_path, monkeypatch):
+    monkeypatch.delattr(nextflow.os, "killpg", raising=False)
+    with pytest.raises(UnsupportedPlatformError, match="Linux and macOS only"):
+        NextflowEngine(fake_nextflow(tmp_path)).run(spec(tmp_path))
+    assert list((tmp_path / "ws" / "runs").iterdir()) == []
+    # Planning does not need process groups.
+    planned = RunSpec(plugin=make_plugin(), params={}, workspace=Workspace(tmp_path / "ws"))
+    assert NextflowEngine("nextflow").run(planned).status == "planned"
