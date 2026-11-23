@@ -299,6 +299,7 @@ def _cmd_run(args: argparse.Namespace, dry_run: bool) -> int:
         if args.json:
             _print_json({"status": "planned", **plan})
         else:
+            _print_input_check(plan, err_style)
             print(plan["command_text"])
         return EXIT_OK
 
@@ -312,6 +313,8 @@ def _cmd_run(args: argparse.Namespace, dry_run: bool) -> int:
         file=sys.stderr,
         flush=True,
     )
+    if not args.json:
+        _print_input_check(plan, err_style)
     workspace.ensure()
     try:
         result = run_pipeline(request, replace(ctx, approved_plan=plan))
@@ -332,6 +335,17 @@ def _cmd_run(args: argparse.Namespace, dry_run: bool) -> int:
         return code
     _print_run(result, outputs, out_style)
     return code
+
+
+def _print_input_check(plan: dict[str, Any], style: Style) -> None:
+    """The domain's input summary and warnings, on stderr (stdout stays the command)."""
+    check = plan.get("input_check")
+    if not check:
+        return
+    if check.get("overview"):
+        print(style("dim", f"  inputs: {check['overview']}"), file=sys.stderr)
+    for warning in check.get("warnings", []):
+        print(style("warn", f"  warning: {warning['message']}"), file=sys.stderr)
 
 
 def _print_run(result: dict[str, Any], outputs: dict[str, Any] | None, style: Style) -> None:
