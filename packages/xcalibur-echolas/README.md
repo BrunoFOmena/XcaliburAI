@@ -17,7 +17,7 @@ Both inputs are folders. `xcalibur plan` and `xcalibur run` check them before an
 | Paired-end | `<sample>_R1` + `<sample>_R2`, `_1`/`_2`, or Illumina's `_R1_001`/`_R2_001`, in any case (`_r1` works). The tag is read only at the end of the name. Both mates must be there. |
 | Single-end | `<sample>.fastq.gz`, without a mate tag. A sample cannot mix both layouts, nor have two files for the same mate (`A_R1` and `A_r1`, or `A.fastq.gz` and `A.fq.gz`). |
 | Sample names | Everything before the mate tag and the extension: `A.v2_R1` is sample `A.v2`, `SRR_123_1` is `SRR_123`, `S8_10` is the single-end sample `S8_10`. Letters, digits, `.`, `_` and `-`, starting with a letter or digit. |
-| Mate tag | Read only at the very end of the name: `A_R1-x.fastq.gz` has none, so it is the single-end sample `A_R1-x`. |
+| Mate tag | Read only at the very end of the name, as `_R1`/`_R2`, `_1`/`_2` or `_R1_` plus exactly three digits. So `A_R1-x` and `A_R1_1234` have none (single-end samples with those names), and `S_R2_1` is sample `S_R2`, mate R1. Split chunks of one mate (`A_R1_001` + `A_R1_002`) are an error: concatenate them first. |
 | Lanes | `X_L001_R1_001` and `X_L002_R1_001` are run as two samples (`X_L001`, `X_L002`) with a warning; merge the lanes first if they are one sample. |
 
 The pipeline (`main.nf`) and the check (`validation.py`) use the same two patterns, and a test runs both on the same names.

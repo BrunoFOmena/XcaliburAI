@@ -66,6 +66,11 @@ NAMES = [
     ("X_L001_R2_001.fq.gz", ("X_L001", "R2")),
     ("A_1_123.fastq.gz", ("A_1_123", "SE")),
     ("_R1.fastq.gz", ("_R1", "SE")),
+    ("S_R2_1.fastq.gz", ("S_R2", "R1")),
+    ("A_R1_1234.fastq.gz", ("A_R1_1234", "SE")),
+    ("A_R1_\u0661\u0662\u0663.fastq.gz", ("A_R1_\u0661\u0662\u0663", "SE")),
+    ("A_r1_001.FQ.GZ", ("A", "R1")),
+    ("1_2.fastq.gz", ("1", "R2")),
     ("A.fastq", None),
     ("A.fastq.bz2", None),
     ("notes.txt", None),
@@ -104,8 +109,11 @@ workflow {
 
 
 @pytest.mark.e2e
-@pytest.mark.skipif(shutil.which("nextflow") is None, reason="needs Nextflow")
 def test_nextflow_reads_names_exactly_like_python(tmp_path):
+    if shutil.which("nextflow") is None:
+        if os.environ.get("XCALIBUR_E2E_REQUIRED") == "1":  # the CI e2e job sets it
+            pytest.fail("the parity test needs nextflow on PATH")
+        pytest.skip("needs Nextflow")
     raw = tmp_path / "raw"
     raw.mkdir()
     for name, _ in NAMES:
@@ -304,6 +312,7 @@ def test_mates_with_different_samples_are_not_paired(tmp_path):
         ["A_R1.fastq.gz", "A_r1.fastq.gz", "A_R2.fastq.gz"],
         ["A.fastq.gz", "A.fq.gz"],
         ["A_1.fastq.gz", "A_R1.fastq.gz", "A_2.fastq.gz"],
+        ["A_R1_001.fastq.gz", "A_R1_002.fastq.gz", "A_R2_001.fastq.gz"],
     ],
 )
 def test_two_files_for_the_same_mate_fail(tmp_path, names):

@@ -41,12 +41,14 @@ IGNORED_DIRS = {"_disabled"}
 """Folders the ECHOLAS layout uses to park files; the pipeline never reads subfolders."""
 
 GZIP_MAGIC = b"\x1f\x8b"
-_FASTQ = re.compile(FASTQ_NAME)
-_MATE = re.compile(MATE_SUFFIX)
+# re.ASCII: Java (Nextflow) regexes match \d and (?i) on ASCII only; Python's would also
+# accept other digits and case rules, so A_R1_١٢٣ would be R1 here and single-end there.
+_FASTQ = re.compile(FASTQ_NAME, re.ASCII)
+_MATE = re.compile(MATE_SUFFIX, re.ASCII)
 _FASTQ_LIKE = re.compile(r"\.(fastq|fq)(\.(gz|bz2|xz|zst))?$", re.IGNORECASE)
 _REFERENCE_LIKE = re.compile(r"\.(fna|fa|fasta)(\.(gz|bz2|xz|zst))?$", re.IGNORECASE)
 _SAFE_SAMPLE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
-_LANE = re.compile(r"(?i)^(.+)_L\d{3}$")
+_LANE = re.compile(r"(?i)^(.+)_L\d{3}$", re.ASCII)
 
 
 def parse_fastq_name(name: str) -> tuple[str, str] | None:
@@ -127,7 +129,7 @@ def _check_reference(path: Path | None, report: InputReport) -> dict[str, Any] |
 
 
 def _check_reads(path: Path | None, report: InputReport) -> list[dict[str, Any]]:
-    folder = _folder(path, "raw_data", "the folder with the .fastq.gz files", report)
+    folder = _folder(path, "raw_data", "the folder with the .fastq.gz/.fq.gz files", report)
     if folder is None:
         return []
     listing = _list_folder(folder, "raw_data", report)
@@ -169,7 +171,7 @@ def _check_reads(path: Path | None, report: InputReport) -> list[dict[str, Any]]
     samples = [s for s in samples if s is not None]
     _warn_lanes(sorted(groups), report)
     if not groups and not any(i.input == "raw_data" for i in report.errors):
-        report.error("no_samples", f"No *.fastq.gz files in {folder}.",
+        report.error("no_samples", f"No FASTQ files (.fastq.gz or .fq.gz) in {folder}.",
                      input="raw_data", path=folder)
     return samples
 
