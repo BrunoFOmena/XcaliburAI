@@ -64,7 +64,14 @@ class Session:
         return None if self.directory is None else self.directory / "audit.jsonl"
 
     def record(self, entry: ToolCallRecord) -> None:
+        """Keep ``entry`` in memory, then append it to ``audit.jsonl`` (if any)."""
+        self.remember(entry)
+        self.write_audit(entry)
+
+    def remember(self, entry: ToolCallRecord) -> None:
         self.tool_calls.append(entry)
+
+    def write_audit(self, entry: ToolCallRecord) -> None:
         if self.audit_path is not None:
             self.audit_path.parent.mkdir(parents=True, exist_ok=True)
             with self.audit_path.open("a", encoding="utf-8") as fh:

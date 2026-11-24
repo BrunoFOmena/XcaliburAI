@@ -755,9 +755,11 @@ def test_truncation_note_fits_the_minimum_limit_with_a_long_path(env, tmp_path, 
     assert len(content) <= 200
     note = json.loads(content)
     assert note["truncated"] is True
-    if note["full_result_path"] is not None:  # shortened, relative to the session directory
+    if call_id == "c1":  # the short name fits relative to the session directory
         assert note["relative_to"] == "session directory"
         assert (session_dir / note["full_result_path"]).is_file()
+    else:  # not even the relative name fits: left out
+        assert note["full_result_path"] is None and "relative_to" not in note
     saved = Path(session.tool_calls[0].result_path)  # the audit keeps the full path
     assert saved.is_absolute() and json.loads(saved.read_text())["result"] == "y" * 5000
 
@@ -831,10 +833,69 @@ def test_confirmation_callback_cannot_change_the_compared_plan(env):
 def test_save_result_never_overwrites_a_file_created_concurrently(tmp_path, monkeypatch):
     session = Session(directory=tmp_path / "s")
     folder = tmp_path / "s" / "tool-results"
-    folder.mkdir(parents=True)
-    taken = folder / "0002-step001-c1.json"  # one file: the next number (2) is taken
-    taken.write_text("other session")
-    monkeypatch.setattr(Path, "exists", lambda self: False)  # the check-then-write race
+    competitor = folder / "0001-step001-c1.json"
+    real_open = Path.open
+
+    def racing_open(self, mode="r", *args, **kwargs):
+        # Another session creates the same name between choosing it and writing it.
+        if mode == "x" and self == competitor and not competitor.exists():
+            competitor.write_text("other session")
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", racing_open)
     path = session.save_result(1, "c1", "mine")
-    assert taken.read_text() == "other session"
-    assert path.name == "0003-step001-c1.json" and path.read_text() == "mine"
+    assert competitor.read_text() == "other session"
+    assert path.name == "0002-step001-c1.json" and path.read_text() == "mine"
+
+
+def test_interruption_right_after_a_call_keeps_its_result_and_record(env, tmp_path):
+    *_, context = env
+
+    class InterruptedSession(Session):
+        """Ctrl+C right after the call returned, before it is recorded."""
+
+        def remember(self, entry):
+            if not self.tool_calls:
+                self.__class__ = Session  # interrupt only once
+                raise KeyboardInterrupt
+            super().remember(entry)
+
+    provider = FakeProvider.scripted(
+        Completion(
+            text="",
+            tool_calls=[ToolCall("c1", "list_domains", {}), ToolCall("c2", "list_domains", {})],
+        )
+    )
+    session = InterruptedSession(directory=tmp_path / "s")
+    with pytest.raises(KeyboardInterrupt):
+        loop_for(provider, context).run("go", session)
+    first, is_error = result_of(session, 0)
+    assert not is_error and "result" in first
+    second, _ = result_of(session, 1)
+    assert second["error"]["started"] is False
+    assert [(r.call_id, r.status) for r in session.tool_calls] == [
+        ("c1", "ok"),
+        ("c2", "interrupted"),
+    ]
+    audit = [json.loads(line) for line in (tmp_path / "s" / "audit.jsonl").open()]
+    assert [(a["call_id"], a["status"]) for a in audit] == [("c1", "ok"), ("c2", "interrupted")]
+
+
+def test_interrupted_approved_run_keeps_the_confirmation(env, tmp_path):
+    domains, workspace, _, _ = env
+
+    class CtrlCEngine(FakeEngine):
+        def run(self, spec):
+            raise KeyboardInterrupt
+
+    context = ToolContext(domains=domains, workspace=workspace, engine=CtrlCEngine())
+    provider = FakeProvider.scripted(tool_call("run_pipeline", "c1", **RUN_ARGS))
+    session = Session(directory=tmp_path / "s")
+    with pytest.raises(KeyboardInterrupt):
+        loop_for(provider, context, confirmation=AllowAll()).run("run", session)
+    payload, _ = result_of(session, 0)
+    assert payload["error"]["started"] is True
+    record = session.tool_calls[0]
+    assert record.status == "interrupted" and record.confirmation == "approved"
+    audit = json.loads((tmp_path / "s" / "audit.jsonl").read_text())
+    assert audit["confirmation"] == "approved"
