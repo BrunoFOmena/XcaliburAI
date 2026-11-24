@@ -65,6 +65,8 @@ class ChatApp:
     auto_confirm: bool = False
     json_mode: bool = False
     max_steps: int | None = None
+    config_source: str | None = None
+    """Which configuration file is in use and where it came from (``ConfigLocation.describe``)."""
     read: Reader | None = None
     """Reads one line; defaults to ``input`` (looked up at call time)."""
     out: TextIO = field(default_factory=lambda: sys.stdout)
@@ -214,6 +216,10 @@ class ChatApp:
         lines = [
             f"provider   {config.provider}",
             f"model      {config.model}",
+        ]
+        if self.config_source:
+            lines.append(f"config     {self.config_source}")
+        lines += [
             f"workspace  {self.workspace.root}",
             f"session    {self.session.id} ({self.session.directory})",
             f"turns      {self.turns}",
