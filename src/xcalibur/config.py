@@ -8,7 +8,8 @@ Where the configuration is read from, in order:
 
 A workspace file may come from a cloned repository, so it may not set ``base_url`` (that
 would send the API key to another server) nor point ``api_key_env`` at a variable other than
-the provider's standard one (that would send another secret as the key).
+the provider's standard one (that would send another secret as the key), and its cost and
+waiting settings are capped (``WORKSPACE_LIMITS``).
 """
 
 from __future__ import annotations
@@ -31,6 +32,12 @@ _ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]*")
 # Line breaks as PyYAML counts them ("\r" is already normalised by Path.read_text).
 _YAML_LINE_BREAK = re.compile("[\n\x85\u2028\u2029]")
 
+# Upper bounds for a workspace file, so a cloned repository cannot make each request
+# disproportionately long or expensive. The user configuration and --config are not capped.
+WORKSPACE_LIMITS: dict[str, int] = {"max_tokens": 64000, "max_retries": 5, "timeout": 600}
+# Any configuration: longer timeouts overflow the operating system's socket timeout.
+MAX_TIMEOUT = 86400
+
 # Expected type of each setting (bool is checked before int: bool is a subclass of int).
 _TYPES: dict[str, tuple[type, ...]] = {
     "provider": (str,),
@@ -50,6 +57,23 @@ class ConfigLocation:
     path: Path
     trusted: bool
     """False for workspace files, which may come from someone else."""
+    overrides: Path | None = None
+    """The user configuration this workspace file replaces, when that file exists."""
+
+    def describe(self) -> str:
+        """Which file is in use and where it came from, in one line."""
+        if self.trusted:
+            origin = "user configuration" if self.path == user_config_path() else "--config"
+            return f"{self.path} ({origin})"
+        return f"{self.path} (workspace file, not trusted: base_url, api_key_env and limits apply)"
+
+    def override_warning(self) -> str | None:
+        if self.overrides is None:
+            return None
+        return (
+            f"{self.path} replaces your user configuration {self.overrides} "
+            "(none of its settings apply; pass --config to use it)"
+        )
 
 
 def user_config_path() -> Path:
@@ -65,11 +89,21 @@ def locate_config(path: Path | None = None, workspace: Path | None = None) -> Co
     if path is not None:
         return ConfigLocation(path, trusted=True)
     if workspace is not None:
-        return ConfigLocation(workspace_config_path(workspace), trusted=False)
+        return workspace_location(workspace_config_path(workspace))
     local = workspace_config_path(Path.cwd())
     if local.exists():
-        return ConfigLocation(local, trusted=False)
+        return workspace_location(local)
     return ConfigLocation(user_config_path(), trusted=True)
+
+
+def workspace_location(path: Path) -> ConfigLocation:
+    """An untrusted workspace file, noting the user configuration it replaces, if any.
+
+    Only an existing workspace file replaces anything; a missing one is reported as such.
+    """
+    user = user_config_path()
+    replaces = path.is_file() and user.is_file()
+    return ConfigLocation(path, trusted=False, overrides=user if replaces else None)
 
 
 def validate_env_name(name: str) -> str:
@@ -111,6 +145,10 @@ def load_llm_config(location: ConfigLocation | Path) -> ProviderConfig:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         raise LLMConfigError(_yaml_error_message(path, text, exc)) from None
+    except ValueError as exc:  # e.g. an integer over 4300 digits, or a date like 2024-13-01
+        # Keep the reason, not Python's advice after ';' (sys.set_int_max_str_digits).
+        reason = str(exc).split(";")[0]
+        raise LLMConfigError(f"{path}: invalid YAML ({_one_line(reason)})") from None
     llm = data.get("llm") if isinstance(data, dict) else None
     if not isinstance(llm, dict):
         raise LLMConfigError(f"{path} has no 'llm' section; run 'xcalibur init'.")
@@ -125,6 +163,12 @@ def load_llm_config(location: ConfigLocation | Path) -> ProviderConfig:
 
 def _one_line(text: str) -> str:
     return " ".join(text.split())
+
+
+def _short(value: object, limit: int = 60) -> str:
+    """repr() for an error message, cut so a huge value stays on a readable line."""
+    text = _one_line(repr(value))
+    return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
 def _yaml_error_message(path: Path, text: str, exc: yaml.YAMLError) -> str:
@@ -155,12 +199,25 @@ def check_workspace_settings(config: ProviderConfig, where: str) -> None:
             "or pass the file explicitly with --config."
         )
     standard = DEFAULT_KEY_ENVS.get(config.provider)
+    if standard is None:
+        raise LLMConfigError(
+            f"{where}: unsupported provider {config.provider!r}; "
+            f"available: {', '.join(sorted(DEFAULT_KEY_ENVS))}."
+        )
     if config.api_key_env and config.api_key_env != standard:
         raise LLMConfigError(
             f"{where} sets api_key_env to {config.api_key_env}, but a workspace configuration "
             f"may only use {standard} (another variable could hold a different secret). "
             "Set it in your user configuration or pass the file explicitly with --config."
         )
+    for name, limit in WORKSPACE_LIMITS.items():
+        value = getattr(config, name)
+        if value > limit:
+            raise LLMConfigError(
+                f"{where} sets {name} above the {limit} allowed in a workspace "
+                "configuration (it bounds the cost and waiting of each request). Set it in your "
+                "user configuration or pass the file explicitly with --config."
+            )
 
 
 def _check_settings(llm: dict[str, Any], path: Path) -> None:
@@ -180,11 +237,23 @@ def _check_settings(llm: dict[str, Any], path: Path) -> None:
         ok = isinstance(value, expected) and (bool in expected or not is_bool)
         if not ok:
             kinds = " or ".join("null" if t is type(None) else t.__name__ for t in expected)
-            raise LLMConfigError(f"{path}: '{name}' must be {kinds}, got {value!r}.")
-    if "timeout" in llm and not math.isfinite(llm["timeout"]):
+            raise LLMConfigError(f"{path}: '{name}' must be {kinds}, got {_short(value)}.")
+    if "timeout" in llm and not _is_finite(llm["timeout"]):
         raise LLMConfigError(f"{path}: 'timeout' must be a finite number.")
+    if llm.get("timeout", 0) > MAX_TIMEOUT:
+        raise LLMConfigError(
+            f"{path}: 'timeout' must be at most {MAX_TIMEOUT} seconds (one day)."
+        )
     for name in ("max_tokens", "timeout"):
         if name in llm and llm[name] <= 0:
             raise LLMConfigError(f"{path}: '{name}' must be greater than zero.")
     if llm.get("max_retries", 0) < 0:
         raise LLMConfigError(f"{path}: 'max_retries' cannot be negative.")
+
+
+def _is_finite(value: int | float) -> bool:
+    """A number usable as seconds: finite and representable as a float."""
+    try:
+        return math.isfinite(float(value))
+    except OverflowError:  # an int beyond float range (e.g. 10**400)
+        return False
