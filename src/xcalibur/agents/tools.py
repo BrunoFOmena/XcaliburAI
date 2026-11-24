@@ -67,7 +67,8 @@ class Tool:
     ``func`` receives the validated ``input_model`` instance and the context, and returns
     anything JSON-serializable (Pydantic models and paths included). When
     ``requires_confirmation`` is set, the runtime asks the confirmation policy first and
-    shows it ``preview(args, context)``: what exactly will run.
+    shows it ``preview(args, context)``: what exactly will run. ``grounded`` marks tools
+    whose numbers are the only ones the answer may state (see ``AgentLoop``).
     """
 
     name: str
@@ -76,6 +77,9 @@ class Tool:
     func: ToolFunc
     requires_confirmation: bool = False
     preview: ToolFunc | None = None
+    grounded: bool = False
+    """The result holds facts about data: after a turn that used it, every number in the
+    answer must match a number in such results (see xcalibur.agents.grounding)."""
 
     def __post_init__(self) -> None:
         check_tool_name(self.name)

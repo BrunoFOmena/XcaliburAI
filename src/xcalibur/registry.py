@@ -13,6 +13,7 @@ from pathlib import Path
 
 from xcalibur.agents.base import AgentSpec
 from xcalibur.agents.tools import Tool
+from xcalibur.inputs import InputValidator
 from xcalibur.manifest import DomainManifest
 
 ENTRY_POINT_GROUP = "xcalibur.domains"
@@ -28,6 +29,8 @@ class DomainPlugin:
     agents: tuple[AgentSpec, ...] = field(default_factory=tuple)
     tools: tuple[Tool, ...] = field(default_factory=tuple)
     """Domain tools; agents see them as ``<domain>__<tool>``."""
+    validate_inputs: InputValidator | None = None
+    """Optional input check the core runs before ``plan`` and ``run`` (see xcalibur.inputs)."""
 
     @property
     def name(self) -> str:
