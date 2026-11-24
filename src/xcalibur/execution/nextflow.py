@@ -17,6 +17,7 @@ from xcalibur.execution.base import (
     RunSpec,
     UnsupportedPlatformError,
 )
+from xcalibur.execution.software import collect_software
 from xcalibur.provenance import RunRecord
 
 _VERSION_TIMEOUT = 30
@@ -122,6 +123,7 @@ class NextflowEngine:
         record.status = status
         record.returncode = returncode
         record.finished_at = datetime.now(UTC)
+        record.software = _software(run_dir)
         record_path = record.write(run_dir)
         return RunResult(
             run_id=spec.run_id,
@@ -189,6 +191,14 @@ class NextflowEngine:
                     else:
                         status = "succeeded" if returncode == 0 else "failed"
         return status, returncode
+
+
+def _software(run_dir: Path) -> dict | None:
+    """What the tasks used, for the record; never lets a failure here fail the run."""
+    try:
+        return collect_software(run_dir)
+    except Exception as exc:  # noqa: BLE001 - provenance is best effort, the run is done
+        return {"notes": [f"software could not be collected: {type(exc).__name__}: {exc}"]}
 
 
 def supports_execution() -> bool:
