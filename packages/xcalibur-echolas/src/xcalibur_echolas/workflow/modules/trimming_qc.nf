@@ -31,7 +31,7 @@ process FASTQC_RAW {
 
 process FASTQC_PARSE {
 
-    conda "conda-forge::unzip"
+    conda "conda-forge::unzip=6.0"
 
     input:
     tuple val(sample), path(zipfile)

@@ -48,7 +48,7 @@ xcalibur check-llm                    # sends a tiny test message and reports th
 For scripts and CI: `xcalibur init --non-interactive --model claude-opus-5-5 --api-key-env ANTHROPIC_API_KEY`.
 The configuration is saved in `~/.config/xcalibur/xcalibur.yaml` (or `<workspace>/xcalibur.yaml` with `--workspace`).
 It is read from `--config PATH`, then `--workspace DIR`, then `./xcalibur.yaml` if present, then the user file.
-A workspace file cannot set `base_url` nor a key variable other than the standard one (a cloned repository could otherwise send your key elsewhere, or another secret as the key).
+A workspace file cannot set `base_url` nor a key variable other than the standard one (a cloned repository could otherwise send your key elsewhere, or another secret as the key). Its cost and waiting settings are capped: `max_tokens` ≤ 64000, `max_retries` ≤ 5, `timeout` ≤ 600 s (above that, set them in your user configuration or pass `--config`); `timeout` is at most 86400 s in any configuration. A workspace file replaces the user configuration as a whole, so `check-llm` and `chat` warn when one does. `xcalibur check-llm` prints the file in use, whether it is a workspace file, and the model and limits it will use; `/status` in the chat shows the file too.
 
 **The goal** is to replace step 3 with a conversation:
 ```text

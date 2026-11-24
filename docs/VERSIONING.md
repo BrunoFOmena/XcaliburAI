@@ -44,7 +44,7 @@ A versão vive em **um só lugar**: [`src/xcalibur/version.py`](../src/xcalibur/
 
 ## Como publicar uma versão
 
-1. Em uma branch cortada de `homolog`, atualize `version.py` (e a versão dos pacotes de domínio e do `manifest.yaml`).
+1. Em uma branch cortada de `homolog`, atualize `version.py` (e a versão dos pacotes de domínio e do `manifest.yaml`, inclusive a tag da imagem em `workflow.container` e no perfil `docker` do `nextflow.config` do ECHOLAS; `tests/test_echolas_container.py` confere que a tag é a versão do pacote).
 2. Mova as entradas de `Unreleased` para uma nova seção `## [X.Y.Z] - AAAA-MM-DD` no [CHANGELOG](../CHANGELOG.md).
 3. Abra o PR para `homolog`; após aprovação, merge e teste, abra o PR `homolog` → `main` e faça o merge com merge commit (ver [CONTRIBUTING](../CONTRIBUTING.md)).
 4. Com o merge em `main`, crie a tag anotada `vX.Y.Z` nesse commit e publique o release no GitHub.
