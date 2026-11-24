@@ -84,7 +84,16 @@ def test_image_tag_is_the_package_version_in_manifest_and_profile():
     assert "conda.enabled = false" in docker.group(1)
     assert "docker.enabled = true" in docker.group(1)
     assert "withName: 'RUN_PCA'" in docker.group(1)
-    assert "/opt/conda/envs/echolas-pca/bin" in docker.group(1)
+    assert "beforeScript" not in docker.group(1)  # it would run outside the container
+
+
+def test_pca_step_gets_its_environment_in_front_of_the_image_path():
+    dockerfile = (DOCKER / "Dockerfile").read_text(encoding="utf-8")
+    image_path = re.search(r"^ENV PATH=(\S+)", dockerfile, re.M).group(1)
+    assert "$" not in image_path, "write the image PATH out in full"
+    config = (WORKFLOW / "nextflow.config").read_text(encoding="utf-8")
+    pca_path = re.search(r"containerOptions = '--env PATH=(\S+)'", config).group(1)
+    assert pca_path == f"/opt/conda/envs/echolas-pca/bin:{image_path}"
 
 
 def test_dockerfile_installs_both_locks_and_checks_the_tools():

@@ -24,10 +24,12 @@ RUN micromamba create -y -n echolas -f ${ECHOLAS_HOME}/envs/echolas.linux-64.loc
  && micromamba create -y -n echolas-pca -f ${ECHOLAS_HOME}/envs/echolas-pca.linux-64.lock \
  && micromamba clean --all --yes
 
-# The main environment is on PATH. The PCA step (RUN_PCA) puts echolas-pca first through
-# the docker profile of nextflow.config, because GATK's package brings its own older R.
+# The main environment is on PATH. The PCA step (RUN_PCA) gets echolas-pca in front of it
+# from the docker profile of nextflow.config (containerOptions), because GATK's package
+# brings its own older R. PATH is written out in full so that the profile can repeat it;
+# tests/test_echolas_container.py checks the two agree.
 # Nextflow runs tasks as the calling user (docker profile), who may have no home here.
-ENV PATH=/opt/conda/envs/echolas/bin:/opt/conda/bin:$PATH \
+ENV PATH=/opt/conda/envs/echolas/bin:/opt/conda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     HOME=/tmp \
     LC_ALL=C.UTF-8
 
