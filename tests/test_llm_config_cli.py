@@ -356,3 +356,29 @@ def test_init_in_a_workspace_refuses_bad_flags_before_asking(tmp_path, monkeypat
     assert cli.main([*args, "--base-url", "https://proxy.example"]) == 2
     assert "base_url" in capsys.readouterr().err
     assert not (tmp_path / "xcalibur.yaml").exists()
+
+
+def test_init_never_echoes_a_pasted_key_as_a_prompt_default(tmp_path, monkeypatch, capsys):
+    prompts = []
+
+    def fake_input(prompt):
+        prompts.append(prompt)
+        return ""
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    assert cli.main(["init", "--config", str(tmp_path / "c.yaml"), "--api-key-env", SECRET]) == 2
+    captured = capsys.readouterr()
+    assert "NAME of an environment variable" in captured.err
+    assert not prompts and SECRET not in captured.out + captured.err
+    assert not (tmp_path / "c.yaml").exists()
+
+
+def test_no_replacement_warning_for_a_missing_workspace_file(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    assert cli.main(["init", "--non-interactive"]) == 0
+    capsys.readouterr()
+    empty = tmp_path / "ws"
+    empty.mkdir()
+    assert cli.main(["check-llm", "--workspace", str(empty)]) == 2
+    err = capsys.readouterr().err
+    assert "No configuration at" in err and "replaces your user configuration" not in err

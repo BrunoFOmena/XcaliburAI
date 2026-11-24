@@ -97,9 +97,13 @@ def locate_config(path: Path | None = None, workspace: Path | None = None) -> Co
 
 
 def workspace_location(path: Path) -> ConfigLocation:
-    """An untrusted workspace file, noting the user configuration it replaces, if any."""
+    """An untrusted workspace file, noting the user configuration it replaces, if any.
+
+    Only an existing workspace file replaces anything; a missing one is reported as such.
+    """
     user = user_config_path()
-    return ConfigLocation(path, trusted=False, overrides=user if user.is_file() else None)
+    replaces = path.is_file() and user.is_file()
+    return ConfigLocation(path, trusted=False, overrides=user if replaces else None)
 
 
 def validate_env_name(name: str) -> str:

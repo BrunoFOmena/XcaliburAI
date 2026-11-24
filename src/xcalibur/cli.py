@@ -181,10 +181,15 @@ def _cmd_init(args: argparse.Namespace) -> int:
     provider = args.provider or "anthropic"
     model = args.model or SUGGESTED_MODELS[provider]
     key_env = args.api_key_env or DEFAULT_KEY_ENVS[provider]
+    try:
+        # Before anything else, so a pasted key is rejected without ever being echoed
+        # (as a prompt's default or in the workspace message below).
+        validate_env_name(key_env)
+    except LLMConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     if to_workspace:
         try:
-            # First, so a pasted key is rejected without being echoed in the message below.
-            validate_env_name(key_env)
             check_workspace_settings(
                 ProviderConfig(provider, model, api_key_env=key_env, base_url=args.base_url),
                 "--workspace",
