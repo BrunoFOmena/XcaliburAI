@@ -1,6 +1,7 @@
 """End-to-end smoke test: the full ECHOLAS pipeline on synthetic data (issue #11).
 
-Runs ``xcalibur run echolas --profile test`` for real (Nextflow + conda/micromamba) on the
+Runs ``xcalibur run echolas --profile test`` for real (Nextflow + conda/micromamba, or the
+ECHOLAS image with ``XCALIBUR_E2E_PROFILE=test,docker``) on the
 dataset from ``tests/data/make_synthetic.py`` and checks that the filtered VCF holds exactly
 the inserted variants with the right genotypes, and that the PCA and the tree are produced
 and separate the two clades.
@@ -9,6 +10,8 @@ Not part of the default ``pytest`` run. Run it with ``pytest -m e2e`` (see CONTR
 
 Environment:
     XCALIBUR_E2E_REQUIRED=1   fail, instead of skip, when Nextflow or micromamba is missing
+    XCALIBUR_E2E_PROFILE      workflow profile(s) (default "test"; "test,docker" runs every
+                              step in the ECHOLAS image, which must be built: issue #4)
     XCALIBUR_E2E_WORKDIR      keep the data and workspace there (the CI uploads it on failure);
                               must be new, empty or left by an earlier run of this test
     XCALIBUR_E2E_TIMEOUT      seconds before the run is stopped (default 900)
@@ -38,6 +41,8 @@ pytestmark = pytest.mark.e2e
 DEFAULT_TIMEOUT = 900  # 15 minutes, the target of issue #11
 GRACE = 60  # seconds xcalibur gets to stop Nextflow after SIGTERM
 MARKER = ".xcalibur-e2e"  # marks a work directory this test may wipe
+PROFILE = os.environ.get("XCALIBUR_E2E_PROFILE", "test")
+USES_DOCKER = "docker" in PROFILE.split(",")
 
 
 @pytest.fixture(autouse=True)
@@ -47,7 +52,8 @@ def _no_network():
 
 
 def _require_tools() -> None:
-    missing = [tool for tool in ("nextflow", "micromamba") if shutil.which(tool) is None]
+    needed = ("nextflow", "docker") if USES_DOCKER else ("nextflow", "micromamba")
+    missing = [tool for tool in needed if shutil.which(tool) is None]
     if not missing:
         return
     message = f"end-to-end test needs {', '.join(missing)} on PATH"
@@ -76,7 +82,7 @@ def run(tmp_path_factory) -> dict:
 
     command = [
         sys.executable, "-c", "from xcalibur.cli import main; raise SystemExit(main())",
-        "run", "echolas", "--profile", "test", "--run-id", "smoke", "--json", "--no-color",
+        "run", "echolas", "--profile", PROFILE, "--run-id", "smoke", "--json", "--no-color",
         "--workspace", str(workspace),
         "-i", f"raw_data={data / 'raw_data'}", "-i", f"reference={data / 'reference'}",
     ]  # fmt: skip
@@ -135,7 +141,7 @@ def test_run_succeeds_with_every_output(run):
     record = json.loads(Path(result["record_path"]).read_text())
     assert record["status"] == "succeeded"
     command = record["command"]
-    assert command[command.index("-profile") + 1] == "test"
+    assert command[command.index("-profile") + 1] == PROFILE
 
 
 def test_auto_mode_picks_conservative_trimming(run):

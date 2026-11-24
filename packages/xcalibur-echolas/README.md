@@ -6,6 +6,43 @@ The Nextflow pipeline in [`src/xcalibur_echolas/workflow`](src/xcalibur_echolas/
 
 Limitation: variant calling assumes a diploid organism (`HaplotypeCaller --ploidy 2`).
 
+## Running environment
+
+The pipeline runs in either of two ways, with the same tool versions:
+
+| Profile | Tools come from | Needs |
+|---|---|---|
+| `standard` (default) | One conda environment per process, created by Nextflow from each process's `conda` directive | Nextflow and conda/mamba/micromamba |
+| `docker` | The ECHOLAS image; conda is not used | Nextflow and Docker |
+
+Combine profiles with a comma: `xcalibur run echolas --profile docker ...` or `--profile test,docker` for the synthetic smoke test.
+
+### Pinned versions
+
+| Tool | Version | Tool | Version |
+|---|---|---|---|
+| FastQC | 0.12.1 | GATK | 4.6.2.0 |
+| Trimmomatic | 0.40 | Picard | 3.1.1 |
+| fastp | 1.0.1 | IQ-TREE | 2.3.6 |
+| BWA | 0.7.17 | PLINK | 1.9.0b.7.7 |
+| samtools | 1.19.2 | R | 4.5.3 (ggplot2 4.0.4, readr 2.2.0, dplyr 1.2.1) |
+| bcftools | 1.19 | unzip, coreutils | 6.0, 9.12 |
+
+They are written in three places that tests keep equal (`tests/test_echolas_container.py`): the `conda` directive of each process (`workflow/modules/*.nf`), the environment files [`workflow/envs/echolas.yml`](src/xcalibur_echolas/workflow/envs/echolas.yml) and [`echolas-pca.yml`](src/xcalibur_echolas/workflow/envs/echolas-pca.yml), and their explicit locks (`*.linux-64.lock`, every package with its build and md5). PLINK and R live in a separate environment because samtools/bcftools 1.19 need zlib < 1.3 and R 4.5 needs zlib >= 1.3.
+
+### The image
+
+```bash
+cd packages/xcalibur-echolas
+docker build -f docker/Dockerfile --build-arg VERSION=0.0.0 -t ghcr.io/brunofomena/xcalibur-echolas:0.0.0 .
+docker run --rm ghcr.io/brunofomena/xcalibur-echolas:0.0.0 bash /opt/echolas/check-tools.sh /opt/echolas/envs
+```
+
+- [`docker/Dockerfile`](docker/Dockerfile) installs both locks on `mambaorg/micromamba:2.0.5-debian12-slim`, and the build fails if any tool is missing or at another version ([`docker/check-tools.sh`](docker/check-tools.sh)). The list is kept in the image at `/opt/echolas/tool-versions.tsv`.
+- The tag is the package version. It is set in `manifest.yaml` (`workflow.container`, recorded in each run's provenance as `container`) and in the `docker` profile of `nextflow.config`.
+- To change a version, edit the `.yml` file and the matching `conda` directive, then run `docker/lock.sh` (needs micromamba) to regenerate the locks.
+- Publishing: the image is meant for `ghcr.io/brunofomena/xcalibur-echolas:<version>`, pushed when a version is released. The CI (`container` job) builds it on every PR, checks the tools and runs the smoke test with `-profile test,docker`, but does not publish it yet; until then, build it locally with the command above.
+
 ## Inputs
 
 Both inputs are folders. `xcalibur plan` and `xcalibur run` check them before anything runs ([`validation.py`](src/xcalibur_echolas/validation.py)) and stop with exit code 2 and a message that names the file and the fix.

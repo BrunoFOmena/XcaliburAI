@@ -1,0 +1,4 @@
+# Only what the Dockerfile copies goes into the build context.
+*
+!docker/
+!src/xcalibur_echolas/workflow/envs/

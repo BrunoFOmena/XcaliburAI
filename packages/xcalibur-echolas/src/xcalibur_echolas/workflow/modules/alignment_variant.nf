@@ -2,7 +2,7 @@ nextflow.enable.dsl=2
 
 process INDEX_REF {
 
-    conda "bioconda::bwa=0.7.17 bioconda::samtools=1.19 bioconda::gatk4=4.6.2.0"
+    conda "bioconda::bwa=0.7.17 bioconda::samtools=1.19.2 bioconda::gatk4=4.6.2.0"
 
     input:
     path ref
@@ -26,7 +26,7 @@ process ALIGN_SORT {
 
     tag "$sample"
 
-    conda "bioconda::bwa=0.7.17 bioconda::samtools=1.19"
+    conda "bioconda::bwa=0.7.17 bioconda::samtools=1.19.2"
 
     publishDir "results/alignments", mode: 'copy'
 
@@ -65,7 +65,7 @@ process INDEX_BAM {
 
     tag "$sample"
 
-    conda "bioconda::samtools=1.19"
+    conda "bioconda::samtools=1.19.2"
 
     publishDir "results/alignments", mode: 'copy', pattern: "*.bai"
 
@@ -89,7 +89,7 @@ process BAM_STATS {
 
     tag "$sample"
 
-    conda "bioconda::samtools=1.19"
+    conda "bioconda::samtools=1.19.2"
 
     publishDir "results/alignments/statistics", mode: 'copy'
 

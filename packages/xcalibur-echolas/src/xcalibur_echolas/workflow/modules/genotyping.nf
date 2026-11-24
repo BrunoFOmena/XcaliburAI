@@ -6,7 +6,7 @@ nextflow.enable.dsl=2
 
 process MAKE_GVCF_MAP {
 
-    conda "conda-forge::coreutils"
+    conda "conda-forge::coreutils=9.12"
 
     publishDir "results/genotyping", mode: 'copy'
 
@@ -36,7 +36,7 @@ process MAKE_GVCF_MAP {
 
 process MAKE_INTERVALS {
 
-    conda "conda-forge::coreutils"
+    conda "conda-forge::coreutils=9.12"
 
     publishDir "results/genotyping", mode: 'copy'
 
