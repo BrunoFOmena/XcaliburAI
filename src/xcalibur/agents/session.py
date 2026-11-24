@@ -78,12 +78,16 @@ class Session:
         folder.mkdir(parents=True, exist_ok=True)
         # Numbered across the whole session: steps restart each turn and ids may repeat.
         seq = len(list(folder.glob("*.json"))) + 1
-        path = folder / f"{seq:04d}-step{step:03d}-{safe_id}.json"
-        while path.exists():
-            seq += 1
+        while True:
             path = folder / f"{seq:04d}-step{step:03d}-{safe_id}.json"
-        path.write_text(text, encoding="utf-8")
-        return path
+            try:
+                # Exclusive create: two sessions sharing the folder never overwrite a file.
+                with path.open("x", encoding="utf-8") as fh:
+                    fh.write(text)
+            except FileExistsError:
+                seq += 1
+                continue
+            return path
 
 
 def now() -> datetime:
