@@ -1,0 +1,13 @@
+# PLINK and R for the PCA step (modules/pca_phylogeny.nf, PCA_RUN), at exact versions.
+# Separate from echolas.yml because of a zlib conflict (see there).
+name: echolas-pca
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - plink=1.9.0b.7.7
+  - r-base=4.5.3
+  - r-ggplot2=4.0.4
+  - r-readr=2.2.0
+  - r-dplyr=1.2.1

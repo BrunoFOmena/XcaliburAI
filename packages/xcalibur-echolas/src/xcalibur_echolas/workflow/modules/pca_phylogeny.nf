@@ -4,7 +4,7 @@
 
 process RUN_PCA {
 
-    conda "bioconda::plink=1.9 conda-forge::r-base conda-forge::r-ggplot2 conda-forge::r-readr conda-forge::r-dplyr"
+    conda "bioconda::plink=1.9.0b.7.7 conda-forge::r-base=4.5.3 conda-forge::r-ggplot2=4.0.4 conda-forge::r-readr=2.2.0 conda-forge::r-dplyr=1.2.1"
     publishDir "results/pca", mode: 'copy'
 
     input:

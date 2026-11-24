@@ -12,7 +12,8 @@ keywords:
 workflow:
   engine: nextflow
   entrypoint: workflow/main.nf   # imported from MCamposDA/ECHOLAS (see workflow/NOTICE.md)
-  container: null
+  # Image of the `docker` profile (packages/xcalibur-echolas/docker); tag = package version.
+  container: ghcr.io/brunofomena/xcalibur-echolas:0.0.0
 
 # Input names are also Nextflow params (--raw_data, --reference); both are directories.
 inputs:

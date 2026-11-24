@@ -1,0 +1,30 @@
+# Tools of the ECHOLAS pipeline at exact versions (issue #4), except the PCA step's
+# PLINK and R, which live in echolas-pca.yml: samtools/bcftools 1.19 need zlib < 1.3 and
+# R 4.5 needs zlib >= 1.3, so the two cannot share one environment.
+# The same versions are pinned in each process's `conda` directive (modules/*.nf);
+# tests/test_echolas_container.py checks that they agree. The docker image is built from
+# the explicit locks next to these files (docker/lock.sh regenerates them).
+name: echolas
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - fastqc=0.12.1
+  - trimmomatic=0.40
+  - fastp=1.0.1
+  - bwa=0.7.17
+  - samtools=1.19.2
+  - bcftools=1.19
+  - gatk4=4.6.2.0
+  - picard=3.1.1
+  - iqtree=2.3.6
+  - unzip=6.0
+  - coreutils=9.12
+  # Not named in the modules but needed in the image: Nextflow uses ps for task metrics
+  # and the shell steps use bash, gzip, awk and sed.
+  - procps-ng
+  - bash
+  - gzip
+  - gawk
+  - sed
