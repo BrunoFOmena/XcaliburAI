@@ -195,8 +195,8 @@ class AgentLoop:
         write fails the model still gets what the tool really returned. A call interrupted
         after its tool function started is reported as possibly run, never as not run."""
         outcomes: list[tuple[ToolResult, ToolCallRecord]] = []
+        # Ids of records whose audit write finished, or failed with OSError (not retried).
         written: set[int] = set()
-        """Records whose audit write was attempted (ids)."""
         current: tuple[ToolResult, ToolCallRecord] | None = None
         attempted = 0
         self._tool_started = False
@@ -208,11 +208,16 @@ class AgentLoop:
                 current = self._execute(step, call, context, session)
                 outcomes.append(current)
                 session.remember(current[1])
+                try:
+                    session.write_audit(current[1])
+                except OSError:
+                    written.add(id(current[1]))
+                    raise
                 written.add(id(current[1]))
-                session.write_audit(current[1])
         finally:
-            # An interruption can land between any two lines above: a call that returned
-            # always keeps its real result and its audit record.
+            # A Ctrl+C can land between any two lines above: a call that returned always
+            # keeps its real result and its record, and its audit line is written again if
+            # its write did not finish (at worst it appears twice, never zero times).
             if current is not None and (not outcomes or outcomes[-1] is not current):
                 outcomes.append(current)
             results = [result for result, _ in outcomes]

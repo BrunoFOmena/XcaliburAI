@@ -1,6 +1,9 @@
 """Agent runtime with a scripted LLM (FakeProvider) and a fake engine: no network, no Nextflow."""
 
+import inspect
 import json
+import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -899,3 +902,75 @@ def test_interrupted_approved_run_keeps_the_confirmation(env, tmp_path):
     assert record.status == "interrupted" and record.confirmation == "approved"
     audit = json.loads((tmp_path / "s" / "audit.jsonl").read_text())
     assert audit["confirmation"] == "approved"
+
+
+@contextmanager
+def ctrl_c_before(function, marker, occurrence=0):
+    """Raise KeyboardInterrupt once, just before the line of ``function`` holding the
+    ``occurrence``-th ``marker`` runs (where CPython could deliver a real SIGINT)."""
+    lines, first = inspect.getsourcelines(function)
+    target = first + [i for i, line in enumerate(lines) if marker in line][occurrence]
+    code = function.__code__
+    fired = False
+
+    def local(frame, event, arg):
+        nonlocal fired
+        if event == "line" and frame.f_lineno == target and not fired:
+            fired = True
+            raise KeyboardInterrupt
+        return local
+
+    def tracer(frame, event, arg):
+        return local if frame.f_code is code else None
+
+    previous = sys.gettrace()
+    sys.settrace(tracer)
+    try:
+        yield
+    finally:
+        sys.settrace(previous)
+    assert fired, f"never reached {marker!r}"
+
+
+ONCE = [("c1", "ok"), ("c2", "interrupted")]
+
+
+@pytest.mark.parametrize(
+    ("marker", "occurrence", "expected_audit"),
+    [
+        ("outcomes.append(current)", 0, ONCE),
+        ("session.remember(current[1])", 0, ONCE),
+        ("session.write_audit(current[1])", 0, ONCE),
+        # The line was written but not yet marked: written again (twice, never zero).
+        ("written.add(id(current[1]))", 1, [("c1", "ok"), ("c1", "ok"), ("c2", "interrupted")]),
+    ],
+    ids=["before-append", "before-remember", "before-write", "after-write"],
+)
+def test_ctrl_c_anywhere_after_a_call_returned_keeps_result_and_audit(
+    env, tmp_path, marker, occurrence, expected_audit
+):
+    *_, context = env
+    provider = FakeProvider.scripted(
+        Completion(
+            text="",
+            tool_calls=[ToolCall("c1", "list_domains", {}), ToolCall("c2", "list_domains", {})],
+        )
+    )
+    session = Session(directory=tmp_path / "s")
+    loop = loop_for(provider, context)
+    with (
+        pytest.raises(KeyboardInterrupt),
+        ctrl_c_before(AgentLoop._run_calls, marker, occurrence),
+    ):
+        loop.run("go", session)
+
+    first, is_error = result_of(session, 0)
+    assert not is_error and "result" in first
+    second, _ = result_of(session, 1)
+    assert second["error"]["type"] == "interrupted" and second["error"]["started"] is False
+    assert [(r.call_id, r.status) for r in session.tool_calls] == [
+        ("c1", "ok"),
+        ("c2", "interrupted"),
+    ]
+    audit = [json.loads(line) for line in (tmp_path / "s" / "audit.jsonl").open()]
+    assert [(a["call_id"], a["status"]) for a in audit] == expected_audit
