@@ -36,6 +36,7 @@ from xcalibur.config import (
     user_config_path,
     validate_env_name,
     workspace_config_path,
+    workspace_location,
 )
 from xcalibur.execution.nextflow import NextflowEngine
 from xcalibur.llm import DEFAULT_KEY_ENVS, SUGGESTED_MODELS, SUPPORTED_PROVIDERS, create_provider
@@ -174,19 +175,37 @@ def _ask(label: str, default: str | None) -> str | None:
 
 def _cmd_init(args: argparse.Namespace) -> int:
     interactive = not args.non_interactive
+    # A workspace file follows the workspace rules (no base_url, only the standard key
+    # variable): refuse such flags before asking anything, and never offer another variable.
+    to_workspace = args.config is None and args.workspace is not None
     provider = args.provider or "anthropic"
     model = args.model or SUGGESTED_MODELS[provider]
     key_env = args.api_key_env or DEFAULT_KEY_ENVS[provider]
+    if to_workspace:
+        try:
+            # First, so a pasted key is rejected without being echoed in the message below.
+            validate_env_name(key_env)
+            check_workspace_settings(
+                ProviderConfig(provider, model, api_key_env=key_env, base_url=args.base_url),
+                "--workspace",
+            )
+        except LLMConfigError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
     if interactive:
         provider = _ask("Provider (" + ", ".join(SUPPORTED_PROVIDERS) + ")", provider) or provider
         if provider not in SUPPORTED_PROVIDERS:
             print(f"error: unsupported provider {provider!r}", file=sys.stderr)
             return 2
         model = _ask("Model", args.model or SUGGESTED_MODELS[provider]) or model
-        key_env = _ask(
-            "Name of the environment variable with the API key",
-            args.api_key_env or DEFAULT_KEY_ENVS[provider],
-        ) or key_env
+        if to_workspace:
+            key_env = DEFAULT_KEY_ENVS[provider]
+            print(f"API key variable: {key_env} (the only one a workspace configuration may use)")
+        else:
+            key_env = _ask(
+                "Name of the environment variable with the API key",
+                args.api_key_env or DEFAULT_KEY_ENVS[provider],
+            ) or key_env
     try:
         validate_env_name(key_env)
     except LLMConfigError as exc:
@@ -211,7 +230,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
         base_url=args.base_url,
         effort=args.effort,
     )
-    if args.config is None and args.workspace is not None:
+    if to_workspace:
         try:
             check_workspace_settings(config, "--workspace")
         except LLMConfigError as exc:
@@ -230,6 +249,12 @@ def _cmd_init(args: argparse.Namespace) -> int:
     if args.check:
         return _check(config)
     return 0
+
+
+def _warn_override(location: ConfigLocation) -> None:
+    warning = location.override_warning()
+    if warning:
+        print(f"warning: {warning}", file=sys.stderr)
 
 
 def _check(config: ProviderConfig) -> int:
@@ -255,11 +280,19 @@ def _check(config: ProviderConfig) -> int:
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
+    location = locate_config(args.config, args.workspace)
+    _warn_override(location)
     try:
-        config = load_llm_config(locate_config(args.config, args.workspace))
+        config = load_llm_config(location)
     except LLMConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    print(f"config: {location.describe()}")
+    effort = f", effort {config.effort}" if config.effort else ""
+    print(
+        f"using {config.provider} model {config.model}{effort}, max_tokens {config.max_tokens}, "
+        f"max_retries {config.max_retries}, timeout {config.timeout:g}s"
+    )
     return _check(config)
 
 
@@ -408,7 +441,7 @@ def _chat_config(args: argparse.Namespace, workspace: Path) -> ConfigLocation:
         return ConfigLocation(args.config, trusted=True)
     local = workspace_config_path(workspace)
     if local.exists():
-        return ConfigLocation(local, trusted=False)
+        return workspace_location(local)
     return ConfigLocation(user_config_path(), trusted=True)
 
 
@@ -416,8 +449,10 @@ def _cmd_chat(args: argparse.Namespace) -> int:
     if args.max_steps is not None and args.max_steps < 1:
         raise UsageError("--max-steps must be at least 1")
     root = (args.workspace or Path.cwd()).absolute()
+    location = _chat_config(args, root)
+    _warn_override(location)
     try:
-        config = load_llm_config(_chat_config(args, root))
+        config = load_llm_config(location)
         provider = create_provider(config)
         # Fail now, not at the first message, when the SDK or the key is missing
         # (building the client checks both without any network call).
@@ -434,6 +469,7 @@ def _cmd_chat(args: argparse.Namespace) -> int:
         auto_confirm=args.yes,
         json_mode=args.json,
         max_steps=args.max_steps,
+        config_source=location.describe(),
     )
     _enable_line_editing()
     return app.run()

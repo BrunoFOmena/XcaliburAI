@@ -27,7 +27,8 @@ def test_init_non_interactive_saves_only_the_variable_name(tmp_path, monkeypatch
 
 def test_init_rejects_a_pasted_key(tmp_path, capsys):
     assert init(tmp_path, "--api-key-env", SECRET) == 2
-    assert "NAME of an environment variable" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "NAME of an environment variable" in err and SECRET not in err
     assert not (tmp_path / "xcalibur.yaml").exists()
 
 
@@ -161,6 +162,11 @@ BASE = "llm:\n  provider: anthropic\n  model: m\n"
         (BASE + "  max_tokens: true\n", "'max_tokens' must be int"),
         (BASE + "  timeout: 0\n", "greater than zero"),
         (BASE + "  timeout: .nan\n", "finite"),
+        (BASE + "  timeout: " + "9" * 400 + "\n", "'timeout' must be a finite number"),
+        (BASE + "  timeout: 10000000000\n", "at most 86400 seconds"),
+        (BASE + "  max_tokens: " + "9" * 5000 + "\n", "invalid YAML (Exceeds the limit"),
+        (BASE + "  timeout: 2024-13-45\n", "invalid YAML (month must be in 1..12"),
+        (BASE + "  refusal_fallback: " + "9" * 200 + "\n", "got 999"),
         (BASE + "  1: x\n", "setting names must be text"),
     ],
 )
@@ -169,7 +175,7 @@ def test_invalid_config_is_a_clear_error_without_traceback(tmp_path, capsys, con
     path.write_text(content)
     assert cli.main(["check-llm", "--config", str(path)]) == 2
     err = capsys.readouterr().err
-    assert message in err and "Traceback" not in err
+    assert message in err and "Traceback" not in err and "set_int_max_str_digits" not in err
 
 
 @pytest.mark.parametrize(
@@ -232,3 +238,121 @@ def test_init_reports_a_config_that_cannot_be_written(tmp_path, capsys):
     blocker.write_text("x")
     assert cli.main(["init", "--non-interactive", "--config", str(blocker / "c.yaml")]) == 2
     assert "Could not write" in capsys.readouterr().err
+
+
+# -- #40: where the configuration came from, workspace limits, validation edges ------------
+
+
+def _fake_ok(monkeypatch):
+    class Fake:
+        def complete(self, messages):
+            return "OK"
+
+    monkeypatch.setattr(cli, "create_provider", lambda config: Fake())
+
+
+def test_check_llm_names_the_file_and_whether_it_is_a_workspace_file(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    _fake_ok(monkeypatch)
+    assert cli.main(["init", "--non-interactive", "--effort", "low"]) == 0
+    user = tmp_path / "cfg" / "xcalibur" / "xcalibur.yaml"
+    capsys.readouterr()
+    assert cli.main(["check-llm"]) == 0
+    out = capsys.readouterr().out
+    assert f"config: {user} (user configuration)" in out
+    assert "model claude-opus-5-5, effort low, max_tokens 16000, max_retries 2" in out
+
+    assert cli.main(["check-llm", "--config", str(user)]) == 0
+    assert f"config: {user} (user configuration)" in capsys.readouterr().out
+    other = tmp_path / "other.yaml"
+    other.write_text(BASE)
+    assert cli.main(["check-llm", "--config", str(other)]) == 0
+    assert f"config: {other} (--config)" in capsys.readouterr().out
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "xcalibur.yaml").write_text(BASE)
+    assert cli.main(["check-llm", "--workspace", str(ws)]) == 0
+    out = capsys.readouterr().out
+    assert f"config: {ws / 'xcalibur.yaml'} (workspace file, not trusted" in out
+
+
+def test_a_local_file_replacing_the_user_configuration_is_announced(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    _fake_ok(monkeypatch)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "xcalibur.yaml").write_text(BASE)
+    monkeypatch.chdir(ws)
+    assert cli.main(["check-llm"]) == 0
+    assert "replaces your user configuration" not in capsys.readouterr().err  # none exists
+
+    assert cli.main(["init", "--non-interactive", "--base-url", "https://proxy.example"]) == 0
+    capsys.readouterr()
+    assert cli.main(["check-llm"]) == 0
+    err = capsys.readouterr().err
+    user = tmp_path / "cfg" / "xcalibur" / "xcalibur.yaml"
+    local = ws / "xcalibur.yaml"
+    assert err.startswith(f"warning: {local} replaces your user configuration {user}")
+    assert "--config" in err
+
+
+@pytest.mark.parametrize(
+    "setting, limit",
+    [("max_retries: 6", "max_retries above the 5"), ("timeout: 600.5", "timeout above the 600"),
+     ("max_tokens: 64001", "max_tokens above the 64000")],
+)
+def test_workspace_cost_and_waiting_settings_are_capped(tmp_path, capsys, setting, limit):
+    path = tmp_path / "xcalibur.yaml"
+    path.write_text(BASE + f"  {setting}\n")
+    assert cli.main(["check-llm", "--workspace", str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert limit in err and "--config" in err and "Traceback" not in err
+    assert load_llm_config(ConfigLocation(path, trusted=True))  # the user may go above
+
+
+def test_workspace_limits_are_inclusive(tmp_path):
+    path = tmp_path / "xcalibur.yaml"
+    path.write_text(BASE + "  max_retries: 5\n  timeout: 600\n  max_tokens: 64000\n")
+    config = load_llm_config(path)
+    assert (config.max_retries, config.timeout, config.max_tokens) == (5, 600, 64000)
+
+
+def test_workspace_with_an_unknown_provider_never_says_none(tmp_path, capsys):
+    (tmp_path / "xcalibur.yaml").write_text(
+        "llm:\n  provider: openai\n  model: m\n  api_key_env: OPENAI_API_KEY\n"
+    )
+    assert cli.main(["check-llm", "--workspace", str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "unsupported provider 'openai'; available: anthropic" in err and "None" not in err
+
+
+def test_init_interactive_in_a_workspace_never_asks_for_another_key_variable(
+    tmp_path, monkeypatch, capsys
+):
+    prompts = []
+    answers = iter(["", "claude-sonnet-5-5"])
+
+    def fake_input(prompt):
+        prompts.append(prompt)
+        return next(answers)
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    assert cli.main(["init", "--workspace", str(tmp_path)]) == 0
+    assert len(prompts) == 2 and not any("environment variable" in p for p in prompts)
+    assert "API key variable: ANTHROPIC_API_KEY" in capsys.readouterr().out
+    assert load_llm_config(tmp_path / "xcalibur.yaml").api_key_env == "ANTHROPIC_API_KEY"
+
+
+def test_init_in_a_workspace_refuses_bad_flags_before_asking(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("builtins.input", lambda prompt: pytest.fail("prompted"))
+    args = ["init", "--workspace", str(tmp_path)]
+    assert cli.main([*args, "--api-key-env", "GITHUB_TOKEN"]) == 2
+    assert "GITHUB_TOKEN" in capsys.readouterr().err
+    assert cli.main([*args, "--base-url", "https://proxy.example"]) == 2
+    assert "base_url" in capsys.readouterr().err
+    assert not (tmp_path / "xcalibur.yaml").exists()

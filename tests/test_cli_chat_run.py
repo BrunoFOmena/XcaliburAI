@@ -289,6 +289,25 @@ def test_chat_session_commands_and_end_of_input(env, chat, capsys):
     assert provider.calls == []  # session commands never reach the model
 
 
+def test_chat_names_its_configuration_and_warns_when_it_replaces_the_user_one(
+    env, chat, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    code, _, _ = chat([], ["/status"])
+    assert code == 0
+    captured = capsys.readouterr()
+    local = env["ws"] / "xcalibur.yaml"
+    assert f"config     {local} (workspace file, not trusted" in captured.out
+    assert "replaces your user configuration" not in captured.err
+
+    user = tmp_path / "cfg" / "xcalibur" / "xcalibur.yaml"
+    user.parent.mkdir(parents=True)
+    user.write_text("llm:\n  provider: anthropic\n  model: user-model\n")
+    chat([], ["/exit"])
+    err = capsys.readouterr().err
+    assert f"warning: {local} replaces your user configuration {user}" in err
+
+
 def test_chat_ctrl_c_stops_the_answer_but_not_the_session(env, chat, capsys):
     def interrupt(messages, tools):
         raise KeyboardInterrupt
