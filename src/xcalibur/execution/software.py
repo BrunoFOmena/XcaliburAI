@@ -29,9 +29,9 @@ VERSIONS_LABEL = "org.xcalibur.tool-versions"
 MAX_TASKS = 20000
 DOCKER_TIMEOUT = 60
 
-# "### name: 'TRIMMING_QC:FASTQC_RAW (SA1)'": the tag in parentheses is the task's, not
-# the process's.
-_NAME = re.compile(r"^### name: '(.+?)(?: \(.*\))?'\s*$")
+# "### name: 'TRIMMING_QC:FASTQC_RAW (SA1)'" (Nextflow 25; 26 uses double quotes): the
+# tag in parentheses is the task's, not the process's.
+_NAME = re.compile(r"""^### name: (['"])(.+?)(?: \(.*\))?\1\s*$""")
 _CONDA = re.compile(r"\b(?:conda|mamba|micromamba)\s+activate\s+(\S+)")
 _SOURCE = re.compile(r"\bsource\s+activate\s+(\S+)")
 _CONTAINER = re.compile(r"\b(docker|podman)\s+run\b.*?--name\s+\S+\s+(\S+)\s+/bin/(?:ba)?sh\b")
@@ -93,7 +93,7 @@ def _read_task(script: Path) -> dict[str, Any] | None:
         with script.open(encoding="utf-8", errors="replace") as handle:
             for line in handle:
                 if task["process"] is None and (match := _NAME.match(line)):
-                    task["process"] = match.group(1)
+                    task["process"] = match.group(2)
                 elif match := (_CONDA.search(line) or _SOURCE.search(line)):
                     task["conda"] = match.group(1).strip("'\"")
                 elif match := _CONTAINER.search(line):

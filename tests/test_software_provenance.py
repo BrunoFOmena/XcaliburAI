@@ -29,11 +29,11 @@ def conda_env(root: Path, name: str, packages: dict[str, str], extra=("zlib", "1
     return root / name
 
 
-def task(work: Path, hash_: str, name: str, body: str) -> None:
+def task(work: Path, hash_: str, name: str, body: str, quote: str = "'") -> None:
     folder = work / hash_[:2] / hash_[2:]
     folder.mkdir(parents=True)
     (folder / ".command.run").write_text(
-        f"#!/bin/bash\n### ---\n### name: '{name}'\n### ...\nset -e\n{body}\n")
+        f"#!/bin/bash\n### ---\n### name: {quote}{name}{quote}\n### ...\nset -e\n{body}\n")
 
 
 def conda_line(env: Path) -> str:
@@ -88,6 +88,14 @@ def test_conda_packages_per_process_and_merged(tmp_path):
         "PCA_PHYLOGENY:RUN_PCA": {"conda": {"plink": "1.9.0b.7.7", "r-base": "4.5.3"}},
     }
     assert result["conda_envs"] == 2 and result["containers"] == [] and result["notes"] == []
+
+
+def test_both_nextflow_header_styles_are_read(tmp_path):
+    # Nextflow 25 quotes the task name with ', Nextflow 26 with ".
+    env = conda_env(tmp_path / "envs", "env", {"bwa": "0.7.17"})
+    task(tmp_path / "work", "aa1111", "A:OLD (SA1)", conda_line(env), quote="'")
+    task(tmp_path / "work", "bb2222", "B:NEW (SA1)", conda_line(env), quote='"')
+    assert list(collect_software(tmp_path)["processes"]) == ["A:OLD", "B:NEW"]
 
 
 def test_two_versions_of_one_tool_are_both_kept(tmp_path):
