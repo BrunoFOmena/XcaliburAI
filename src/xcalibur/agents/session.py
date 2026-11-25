@@ -35,6 +35,10 @@ class ToolCallRecord:
     """Where the full result was saved when it was too long to send back."""
     summary: str = ""
     """Start of the result sent to the model."""
+    outcome: dict[str, Any] | None = None
+    """For a successful call whose result is a mapping: its ``run_id`` and ``status``, when
+    present, taken before serialization, so they survive truncation (``run_pipeline``: the
+    run can fail while the call succeeds)."""
 
     def to_json(self) -> dict[str, Any]:
         data = asdict(self)

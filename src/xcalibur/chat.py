@@ -7,7 +7,6 @@ runs only after the user answers yes, unless ``--yes`` was given explicitly.
 from __future__ import annotations
 
 import json
-import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -37,9 +36,6 @@ Commands:
   /exit     leave the chat (also Ctrl+D)
 Anything else is sent to the assistant. Ctrl+C during an answer stops only that answer;
 at an empty prompt it leaves the chat (exit code 130)."""
-
-# run_pipeline results start with {"run_id": ..., "status": ...}: both fit in a record summary.
-_RUN_STATUS = re.compile(r'"run_id":\s*"([^"]*)",\s*"status":\s*"([^"]*)"')
 
 Reader = Callable[[str], str]
 
@@ -263,12 +259,11 @@ def _call_line(record: ToolCallRecord) -> str:
     """One line per tool call. For ``run_pipeline`` the tool can succeed while the run
     fails, so the line shows the run's own status (``✗ run_pipeline: run c1 failed``)."""
     tool = printable(record.tool)
-    if record.status == "ok" and record.tool == "run_pipeline":
-        found = _RUN_STATUS.search(record.summary)
-        if found:
-            run_id, status = (printable(g) for g in found.groups())
-            mark = "✓" if status == "succeeded" else "✗"
-            return f"{mark} {tool}: run {run_id} {status}"
+    outcome = record.outcome or {}
+    if record.status == "ok" and record.tool == "run_pipeline" and "status" in outcome:
+        run_id, status = printable(outcome.get("run_id", "?")), printable(outcome["status"])
+        mark = "✓" if status == "succeeded" else "✗"
+        return f"{mark} {tool}: run {run_id} {status}"
     mark = "✓" if record.status == "ok" else "✗"
     return f"{mark} {tool} ({record.status})"
 

@@ -205,6 +205,14 @@ def test_usage_errors_are_json_with_json(env, capsys, argv):
     assert captured.out == "" and captured.err.startswith("error: ")
 
 
+@pytest.mark.parametrize("flag", ["--js", "--j", "--jso"])
+def test_usage_errors_are_json_with_an_abbreviated_json(env, capsys, flag):
+    assert cli.main(["run", "demo", "--bogus", flag]) == 2  # argparse fails
+    assert json.loads(capsys.readouterr().out)["error"]["type"] == "usage_error"
+    assert cli.main(["run", "demo", "-p", "bad", flag]) == 2  # argparse succeeds
+    assert json.loads(capsys.readouterr().out)["error"]["type"] == "usage_error"
+
+
 def test_usage_error_after_double_dash_is_not_json(capsys):
     assert cli.main(["run", "--bogus", "--", "--json"]) == 2
     assert capsys.readouterr().out == ""
@@ -331,6 +339,26 @@ def test_chat_shows_the_run_status_after_run_pipeline(env, chat, capsys):
     assert "run_pipeline (ok)" not in out
 
 
+def test_chat_run_line_uses_the_structured_outcome_not_the_summary():
+    from datetime import UTC, datetime
+
+    from xcalibur.agents.session import ToolCallRecord
+    from xcalibur.chat import _call_line
+
+    stamp = datetime.now(UTC)
+    truncated = ToolCallRecord(
+        step=1, call_id="c", tool="run_pipeline", arguments={}, status="ok",
+        started_at=stamp, finished_at=stamp, truncated=True,
+        summary='{"truncated": true, "preview": "{\\"run_id\\": ...',
+        outcome={"run_id": "c9", "status": "failed"},
+    )
+    assert _call_line(truncated) == "✗ run_pipeline: run c9 failed"
+    truncated.outcome = {"run_id": "c9", "status": "succeeded"}
+    assert _call_line(truncated) == "✓ run_pipeline: run c9 succeeded"
+    truncated.outcome = None
+    assert _call_line(truncated) == "✓ run_pipeline (ok)"
+
+
 def test_chat_confirmation_escapes_control_characters_in_file_names(env, chat, capsys):
     hostile = env["reads"].parent / "reads\x1b[2K\rclean"
     hostile.mkdir()
@@ -370,6 +398,10 @@ def test_printable_escapes_control_and_format_characters():
     assert printable("line 1\nline 2\tok", keep_newlines=True) == "line 1\nline 2\tok"
     assert printable("line 1\nline 2") == "line 1\\nline 2"
     assert printable("ação · ✓ 測試") == "ação · ✓ 測試"
+    # A literal backslash is doubled, so it never reads like an escaped character...
+    assert printable("lit\\x1b real\x1b") == "lit\\\\x1b real\\x1b"
+    # ...except in prose, where backslashes stay as written.
+    assert printable("C:\\data\n", keep_newlines=True) == "C:\\data\n"
 
 
 def test_chat_help_explains_ctrl_c(env, chat, capsys):

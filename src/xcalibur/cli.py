@@ -542,12 +542,21 @@ def _main(argv: list[str] | None) -> int:
         # The options could not be parsed, so look for the output flags among the words
         # before a "--" (after it, "--json" would be a value, not an option).
         options = tokens[: tokens.index("--")] if "--" in tokens else tokens
-        flags = argparse.Namespace(json="--json" in options, no_color="--no-color" in options)
+        flags = argparse.Namespace(
+            json=_given(options, "--json", 3), no_color=_given(options, "--no-color", 5)
+        )
         return _report_error(flags, "usage_error", str(exc), EXIT_USAGE)
     try:
         return _dispatch(args)
     except UsageError as exc:
         return _report_error(args, "usage_error", str(exc), EXIT_USAGE)
+
+
+def _given(tokens: list[str], option: str, shortest: int) -> bool:
+    """Whether ``option`` is among ``tokens``, also abbreviated the way argparse accepts it
+    (``--js`` for ``--json``). The shortest prefix is one no other option shares (``--j``,
+    ``--no-``, since ``init`` has ``--non-interactive``)."""
+    return any(len(t) >= shortest and option.startswith(t) for t in tokens)
 
 
 def _dispatch(args: argparse.Namespace) -> int:

@@ -318,6 +318,30 @@ def test_long_results_are_truncated_and_saved(env, tmp_path):
     assert audit[0]["result_path"] == str(saved)
 
 
+def test_outcome_keeps_run_id_and_status_even_when_the_result_is_truncated(env, tmp_path):
+    *_, context = env
+
+    class Args(ToolInput):
+        pass
+
+    big = {"run_id": "r1", "status": "failed", "log": "x" * 5000, "nested": {"status": "ok"}}
+    tools = ToolRegistry([
+        Tool("big_run", "Large run result.", Args, lambda a, c: big),
+        Tool("plain", "Not a mapping.", Args, lambda a, c: "done"),
+        Tool("broken", "Fails.", Args, lambda a, c: (_ for _ in ()).throw(ToolError("no"))),
+    ])
+    provider = FakeProvider.scripted(
+        tool_call("big_run", "c1"), tool_call("plain", "c2"), tool_call("broken", "c3"), "ok"
+    )
+    session = Session(directory=tmp_path / "s")
+    AgentLoop(provider, tools, context, max_result_chars=1000).run("hi", session)
+    big_record, plain, broken = session.tool_calls
+    assert big_record.truncated and big_record.outcome == {"run_id": "r1", "status": "failed"}
+    assert plain.outcome is None and broken.outcome is None
+    audit = [json.loads(line) for line in (tmp_path / "s" / "audit.jsonl").open()]
+    assert audit[0]["outcome"] == {"run_id": "r1", "status": "failed"}
+
+
 def test_truncated_note_fits_even_when_escaping_grows_it(env, tmp_path):
     *_, context = env
 

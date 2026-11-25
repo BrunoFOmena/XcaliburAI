@@ -137,7 +137,7 @@ The ECHOLAS package is the reference: [`xcalibur_echolas/__init__.py`](../packag
 
 ## Audit (`agents/session.py`)
 
-`Session` holds the message history and a `ToolCallRecord` per call: step, call id, tool, arguments as sent by the model, status, start and end times, confirmation outcome, whether the result was truncated and where it was saved. With `Session(directory=...)`, each record is appended to `audit.jsonl` and long results go to `tool-results/<n>-step<step>-<call id>.json`, numbered across the session and created exclusively, so a file is never overwritten, not even by another session writing to the same directory at the same time. Long-term persistence of sessions is not built yet.
+`Session` holds the message history and a `ToolCallRecord` per call: step, call id, tool, arguments as sent by the model, status, start and end times, confirmation outcome, whether the result was truncated and where it was saved, and `outcome`: for a successful call whose result is a mapping, its `run_id` and `status` (taken before truncation; the chat uses it to show a run's own status). With `Session(directory=...)`, each record is appended to `audit.jsonl` and long results go to `tool-results/<n>-step<step>-<call id>.json`, numbered across the session and created exclusively, so a file is never overwritten, not even by another session writing to the same directory at the same time. Long-term persistence of sessions is not built yet.
 
 ## Testing without network
 

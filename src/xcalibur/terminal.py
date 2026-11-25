@@ -57,11 +57,15 @@ def printable(text: object, keep_newlines: bool = False) -> str:
     """``text`` safe to print: control and format characters (escape codes, ``\\r``,
     bidirectional overrides, zero-width marks) are shown escaped, like ``repr`` does, so
     text from the model or from file names cannot hide or rewrite what the user is reading.
-    ``keep_newlines`` keeps line breaks and tabs (multi-line answers)."""
+    A backslash is doubled, so a literal ``\\x1b`` never reads like an escaped one.
+    ``keep_newlines`` is for prose (multi-line answers): it keeps line breaks and tabs and
+    leaves backslashes as they are."""
     out: list[str] = []
     for char in str(text):
         if keep_newlines and char in "\n\t":
             out.append(char)
+        elif char == "\\" and not keep_newlines:
+            out.append("\\\\")
         elif unicodedata.category(char) in {"Cc", "Cf", "Cs", "Co", "Zl", "Zp"}:
             out.append(char.encode("unicode_escape").decode("ascii"))
         else:
