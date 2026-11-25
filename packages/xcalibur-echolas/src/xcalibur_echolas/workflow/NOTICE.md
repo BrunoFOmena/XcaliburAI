@@ -14,6 +14,7 @@ Changes made for XcaliburAI (no change to the scientific logic):
   read. `main.nf` passes the mate with each file, so `trimming_qc.nf` no longer re-reads
   it from the name. The original rule cut the name at the first `.`, removed every `_1`,
   `_2`, `_R1` and `_R2`, and looked for the mate anywhere in the name.
+- `modules/trimming_qc.nf` (#81): the fastp paths (`TRIM_PE_INTERMEDIATE`, `TRIM_PE_AGGRESSIVE`, `TRIM_SE_BASIC`, `TRIM_SE_AGGRESSIVE`) trim with a Q15 sliding window (`--cut_tail`, `--cut_right`, and `--cut_front` on the aggressive paths) and then filter with fastp's defaults (`-q 15 -u 40`), instead of filtering only at `-q 25`/`-q 30`, which dropped whole low-quality reads. Length minimums and the other filters are unchanged.
 - `nextflow.config`: a `params` block with the defaults (`mode`, `raw_data`, `reference`).
 - `modules/pca_phylogeny.nf`: helper scripts are resolved from `${projectDir}/scripts/`,
   so the pipeline runs from any launch directory.
