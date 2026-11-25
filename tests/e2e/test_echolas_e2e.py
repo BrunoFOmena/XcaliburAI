@@ -31,6 +31,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 sys.path.insert(0, str(DATA_DIR))
@@ -142,6 +143,29 @@ def test_run_succeeds_with_every_output(run):
     assert record["status"] == "succeeded"
     command = record["command"]
     assert command[command.index("-profile") + 1] == PROFILE
+
+
+def test_record_lists_the_tools_at_their_pinned_versions(run):
+    """Issue #70: the record says which tool versions ran, in both profiles."""
+    envs = Path(__file__).resolve().parents[2] / (
+        "packages/xcalibur-echolas/src/xcalibur_echolas/workflow/envs")
+    pinned = {}
+    for name in ("echolas.yml", "echolas-pca.yml"):
+        for dep in yaml.safe_load((envs / name).read_text())["dependencies"]:
+            package, _, version = dep.partition("=")
+            if version:
+                pinned[package] = version
+    software = json.loads(Path(run["result"]["record_path"]).read_text())["software"]
+    tools = software["tools"]
+    # Every step ran: the synthetic data take every trimming path (#77), fastp included.
+    assert set(pinned) <= set(tools), software["notes"]
+    for package, version in tools.items():
+        assert pinned.get(package) == version, f"{package} ran {version}, not the pinned one"
+    assert software["processes"]["PCA_PHYLOGENY:RUN_PCA"]
+    if USES_DOCKER:
+        (container,) = software["containers"]
+        assert container["image"].startswith("ghcr.io/brunofomena/xcalibur-echolas:")
+        assert container["id"].startswith("sha256:")
 
 
 def test_auto_mode_takes_every_trimming_path(run):
