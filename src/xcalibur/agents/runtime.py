@@ -102,8 +102,8 @@ class AgentLoop:
             if unknown:
                 raise ValueError(f"allowed_tools lists unknown tools: {unknown}")
         self.allowed_tools = None if allowed_tools is None else list(allowed_tools)
-        self._grounded_results: list[str] = []
-        """Full text of this turn's successful grounded results."""
+        self._grounded_results: list[Any] = []
+        """This turn's successful grounded results, as data (only their numbers count)."""
 
     def tool_names(self) -> list[str]:
         return self.tools.names() if self.allowed_tools is None else list(self.allowed_tools)
@@ -254,7 +254,7 @@ class AgentLoop:
         )
         session.record(record)
         if status == "ok" and tool is not None and tool.grounded:
-            self._grounded_results.append(text)
+            self._grounded_results.append(json.loads(text))
         return ToolResult(tool_call_id=call.id, content=content, is_error=status != "ok")
 
     def _tool(self, name: str) -> Tool:
