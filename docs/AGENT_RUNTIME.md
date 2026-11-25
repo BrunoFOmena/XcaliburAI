@@ -94,11 +94,14 @@ Nothing runs when the arguments are invalid, the tool is unknown or the confirma
 
 A model can write a convincing number that no file contains. When a turn used at least one tool with `grounded=True`, the loop checks the final answer before returning it:
 
-1. Every number written in the answer (not identifiers like `PC1` or `SA2`, nor list markers) must match a number in that turn's successful grounded results, or in the user's message, at the precision shown: `78,2%` and `78%` match `78.18`. Decimal commas and thousands separators are understood.
+1. Every number written in the answer must match a number in that turn's successful grounded results, or in the user's message, at the precision shown: `78,2%` and `78%` match `78.18`. Decimal commas and thousands separators are understood. Identifiers (`PC1`, `SA2`), issue references (`#52`) and list markers are not numbers.
+   - Only **numeric values** of a result count. Numbers inside its strings (a rule such as `"UFBoot >= 95"`, a note, a caveat) do not; a tool that wants a threshold to be quotable returns it as a number.
+   - A **percentage** (`95%`, `95 por cento`, `95 percent`) must match a value under a key containing `percent` or `pct`.
+   - Numbers **written as words**, zero to one hundred, in Portuguese and English (`seis`, `vinte e sete`, `twenty-seven`), are checked too; `um`, `uma` and `one` are skipped because they are mostly articles or pronouns.
 2. If some do not match, the model gets one message, `[grounding check] ...`, naming them, and one more step to rewrite the answer (this uses one of `max_steps`).
 3. If the rewritten answer still has untraced numbers, it is returned with a warning that lists them, and `LoopResult.ungrounded_numbers` holds them.
 
-Turns that used no grounded tool are not checked. The check is a safety net, not a proof: numbers written as words, and numbers that happen to appear in a result for another reason (`95` when a result states the rule `UFBoot >= 95`), are not caught. The default system prompt also tells the model to copy every number from tool results.
+Turns that used no grounded tool are not checked. The check is a safety net, not a proof: a wrong number that equals another numeric value of the same kind in the results still passes, and fractions written as words ("metade", "two thirds") are not read. The default system prompt also tells the model to copy every number from tool results.
 
 ## Confirmation (`agents/confirmation.py`)
 
