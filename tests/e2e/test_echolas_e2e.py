@@ -157,8 +157,8 @@ def test_record_lists_the_tools_at_their_pinned_versions(run):
                 pinned[package] = version
     software = json.loads(Path(run["result"]["record_path"]).read_text())["software"]
     tools = software["tools"]
-    # Every step that ran is listed; fastp only runs on the single-end or low-quality paths.
-    assert set(pinned) - {"fastp"} <= set(tools), software["notes"]
+    # Every step ran: the synthetic data take every trimming path (#77), fastp included.
+    assert set(pinned) <= set(tools), software["notes"]
     for package, version in tools.items():
         assert pinned.get(package) == version, f"{package} ran {version}, not the pinned one"
     assert software["processes"]["PCA_PHYLOGENY:RUN_PCA"]
@@ -168,13 +168,17 @@ def test_record_lists_the_tools_at_their_pinned_versions(run):
         assert container["id"].startswith("sha256:")
 
 
-def test_auto_mode_picks_conservative_trimming(run):
-    # The reads are about Q36, so AUTO must choose the conservative (Trimmomatic) path.
+def test_auto_mode_takes_every_trimming_path(run):
+    """Issue #77: each sample's quality profile leads AUTO down a different path."""
     trimmed = run["run_dir"] / "results" / "trimmed"
-    assert sorted(p.name for p in trimmed.iterdir()) == ["pe_conservative"]
-    paired = (trimmed / "pe_conservative").glob("*_paired.fastq.gz")
-    samples = {p.name.split("_R")[0] for p in paired}
-    assert samples == set(synth.SAMPLES)
+    expected = {s: p.trimming for s, p in synth.PROFILES.items()}
+    assert sorted(p.name for p in trimmed.iterdir()) == sorted(set(expected.values()))
+    found: dict[str, str] = {}
+    for folder in trimmed.iterdir():
+        for path in folder.glob("*.fastq.gz"):
+            sample = re.sub(r"(_R[12])?_(paired|trimmed)\.fastq\.gz$", "", path.name)
+            found[sample] = folder.name
+    assert found == expected
 
 
 def test_vcf_has_exactly_the_inserted_variants(run):
