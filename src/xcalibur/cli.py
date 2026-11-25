@@ -3,6 +3,8 @@
 Exit codes: 0 success, 1 execution failure (or an unexpected error), 2 wrong usage or
 invalid parameters, 130 interrupted. Errors are printed as one line (input problems found by
 a domain's check, one line each), never as a traceback (set ``XCALIBUR_DEBUG=1`` to see it).
+With ``--json``, every error, usage errors included, is also printed on stdout as
+``{"status": "error", "error": {"type": ..., "message": ...}}``.
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ import os
 import sys
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from pydantic import ValidationError
 
@@ -38,6 +40,7 @@ from xcalibur.config import (
     workspace_config_path,
     workspace_location,
 )
+from xcalibur.execution.base import EngineNotFoundError, UnsupportedPlatformError
 from xcalibur.execution.nextflow import NextflowEngine
 from xcalibur.llm import DEFAULT_KEY_ENVS, SUGGESTED_MODELS, SUPPORTED_PROVIDERS, create_provider
 from xcalibur.llm.base import Message, ProviderConfig
@@ -57,6 +60,14 @@ class UsageError(Exception):
     """Wrong arguments: reported in one line with exit code 2."""
 
 
+class _Parser(argparse.ArgumentParser):
+    """Raises ``UsageError`` instead of exiting, so a bad option is reported like every
+    other error (as JSON on stdout too, with ``--json``). Subparsers inherit the class."""
+
+    def error(self, message: str) -> NoReturn:
+        raise UsageError(f"{self.prog}: {message}")
+
+
 def _parse_kv(items: list[str], what: str = "KEY=VALUE") -> dict[str, str]:
     out: dict[str, str] = {}
     for item in items:
@@ -72,7 +83,7 @@ def _discover() -> DomainRegistry:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _Parser(
         prog="xcalibur",
         description="XcaliburAI: AI agents over workflow engines for genomics.",
         epilog="Exit codes: 0 success, 1 execution failure, 2 wrong usage or invalid "
@@ -326,7 +337,8 @@ def _cmd_run(args: argparse.Namespace, dry_run: bool) -> int:
         return _report_error(args, "invalid_arguments", problems, EXIT_USAGE)
 
     workspace = Workspace((args.workspace or Path.cwd()).absolute())
-    engine = FollowingEngine(NextflowEngine(args.nextflow), stderr_printer(err_style))
+    nextflow = NextflowEngine(args.nextflow)
+    engine = FollowingEngine(nextflow, stderr_printer(err_style))
     ctx = ToolContext(domains=_discover(), workspace=workspace, engine=engine)
 
     if dry_run:
@@ -338,6 +350,14 @@ def _cmd_run(args: argparse.Namespace, dry_run: bool) -> int:
             _print_json({"status": "planned", **plan})
         else:
             _print_input_check(plan, err_style)
+            if args.run_id is None:
+                # The id is part of the command (-with-report runs/<id>/...): say how to
+                # get the same plan again. stdout stays the command alone.
+                print(
+                    err_style("dim", f"  run id: {plan['run_id']} (generated; pass --run-id "
+                              f"{plan['run_id']} to reproduce this plan)"),
+                    file=sys.stderr,
+                )
             print(plan["command_text"])
         return EXIT_OK
 
@@ -345,6 +365,13 @@ def _cmd_run(args: argparse.Namespace, dry_run: bool) -> int:
         plan = preview_run(request, ctx)
     except ToolError as exc:
         return _tool_failure(args, exc)
+    # Before saying "Running" or creating anything in the workspace.
+    try:
+        nextflow.check_available()
+    except EngineNotFoundError as exc:
+        return _report_error(args, "engine_not_found", str(exc), EXIT_FAILED)
+    except UnsupportedPlatformError as exc:
+        return _report_error(args, "unsupported_platform", str(exc), EXIT_FAILED)
     print(
         err_style("brand", f"Running {plan['domain']} · run {plan['run_id']}")
         + err_style("dim", f"\n  {plan['command_text']}"),
@@ -494,9 +521,6 @@ def _enable_line_editing() -> None:
 def main(argv: list[str] | None = None) -> int:
     try:
         return _main(argv)
-    except UsageError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return EXIT_USAGE
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
         return EXIT_INTERRUPTED
@@ -511,7 +535,22 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _main(argv: list[str] | None) -> int:
-    args = build_parser().parse_args(argv)
+    tokens = sys.argv[1:] if argv is None else list(argv)
+    try:
+        args = build_parser().parse_args(tokens)
+    except UsageError as exc:
+        # The options could not be parsed, so look for the output flags among the words
+        # before a "--" (after it, "--json" would be a value, not an option).
+        options = tokens[: tokens.index("--")] if "--" in tokens else tokens
+        flags = argparse.Namespace(json="--json" in options, no_color="--no-color" in options)
+        return _report_error(flags, "usage_error", str(exc), EXIT_USAGE)
+    try:
+        return _dispatch(args)
+    except UsageError as exc:
+        return _report_error(args, "usage_error", str(exc), EXIT_USAGE)
+
+
+def _dispatch(args: argparse.Namespace) -> int:
 
     if args.command == "version":
         print(__version__)

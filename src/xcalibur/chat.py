@@ -7,6 +7,7 @@ runs only after the user answers yes, unless ``--yes`` was given explicitly.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -16,13 +17,13 @@ from typing import Any, TextIO
 from xcalibur.agents.confirmation import AllowAll, CallbackConfirmation, ConfirmationRequest
 from xcalibur.agents.core_tools import build_tool_registry
 from xcalibur.agents.runtime import DEFAULT_SYSTEM_PROMPT, AgentLoop, LoopResult
-from xcalibur.agents.session import Session
+from xcalibur.agents.session import Session, ToolCallRecord
 from xcalibur.agents.tools import ToolContext
 from xcalibur.execution.base import WorkflowEngine
 from xcalibur.llm.base import LLMProvider
 from xcalibur.provenance import RunRecord
 from xcalibur.registry import DomainRegistry
-from xcalibur.terminal import Style
+from xcalibur.terminal import Style, printable
 from xcalibur.version import __version__
 from xcalibur.workspace import Workspace
 
@@ -34,7 +35,11 @@ Commands:
   /status   provider, model, workspace and what this session did
   /runs     runs in the workspace and their status
   /exit     leave the chat (also Ctrl+D)
-Anything else is sent to the assistant. Ctrl+C stops the current answer."""
+Anything else is sent to the assistant. Ctrl+C during an answer stops only that answer;
+at an empty prompt it leaves the chat (exit code 130)."""
+
+# run_pipeline results start with {"run_id": ..., "status": ...}: both fit in a record summary.
+_RUN_STATUS = re.compile(r'"run_id":\s*"([^"]*)",\s*"status":\s*"([^"]*)"')
 
 Reader = Callable[[str], str]
 
@@ -151,27 +156,31 @@ class ChatApp:
         return approved
 
     def _plan_text(self, request: ConfirmationRequest) -> str:
+        """The plan as the user approves it. Everything here may come from the model or
+        from file names, so it is shown through ``printable``: no escape code or ``\\r``
+        can hide part of the command."""
         d = request.details
         s = self.style
-        lines = [s("brand", f"The assistant wants to run {d.get('domain', request.tool)}:")]
+        p = printable
+        lines = [s("brand", f"The assistant wants to run {p(d.get('domain', request.tool))}:")]
         params = d.get("params") or {}
         inputs = d.get("inputs") or {}
         for label, values in (("params", params), ("inputs", inputs)):
             if values:
                 lines.append(f"  {s('accent', label)}")
-                lines += [f"    {k} = {v}" for k, v in values.items()]
+                lines += [f"    {p(k)} = {p(v)}" for k, v in values.items()]
         if d.get("run_id"):
-            lines.append(f"  {s('accent', 'run id')}   {d['run_id']}" +
+            lines.append(f"  {s('accent', 'run id')}   {p(d['run_id'])}" +
                          ("  (resume)" if d.get("resume") else ""))
         if d.get("run_dir"):
-            lines.append(f"  {s('accent', 'run dir')}  {d['run_dir']}")
+            lines.append(f"  {s('accent', 'run dir')}  {p(d['run_dir'])}")
         if d.get("profile"):
-            lines.append(f"  {s('accent', 'profile')}  {d['profile']}")
+            lines.append(f"  {s('accent', 'profile')}  {p(d['profile'])}")
         check = d.get("input_check") or {}
         if check.get("overview"):
-            lines.append(f"  {s('accent', 'detected')} {check['overview']}")
-        lines += [s("warn", f"  warning  {w['message']}") for w in check.get("warnings", [])]
-        lines.append(f"  {s('accent', 'command')}  {request.summary}")
+            lines.append(f"  {s('accent', 'detected')} {p(check['overview'])}")
+        lines += [s("warn", f"  warning  {p(w['message'])}") for w in check.get("warnings", [])]
+        lines.append(f"  {s('accent', 'command')}  {p(request.summary)}")
         return "\n".join(lines)
 
     # -- output -----------------------------------------------------------------------
@@ -188,12 +197,12 @@ class ChatApp:
             print(json.dumps(payload, ensure_ascii=False, default=str), file=self.out, flush=True)
             return
         for record in result.tool_calls:
-            mark = "✓" if record.status == "ok" else "✗"
-            self._info(self.style("dim", f"  {mark} {record.tool} ({record.status})"))
+            self._info(self.style("dim", f"  {_call_line(record)}"))
+        text = printable(result.text, keep_newlines=True)
         if result.stop_reason == "llm_error":
-            print(self.style("error", result.text), file=self.out, flush=True)
+            print(self.style("error", text), file=self.out, flush=True)
             return
-        print(f"{self.style('brand', 'xcalibur ›')} {result.text}", file=self.out, flush=True)
+        print(f"{self.style('brand', 'xcalibur ›')} {text}", file=self.out, flush=True)
         if result.stop_reason == "max_steps":
             self._info(self.style("warn", "(stopped at the step limit)"))
 
@@ -248,6 +257,20 @@ class ChatApp:
     def _info(self, text: str) -> None:
         stream = self.err if self.json_mode else self.out
         print(text, file=stream, flush=True)
+
+
+def _call_line(record: ToolCallRecord) -> str:
+    """One line per tool call. For ``run_pipeline`` the tool can succeed while the run
+    fails, so the line shows the run's own status (``✗ run_pipeline: run c1 failed``)."""
+    tool = printable(record.tool)
+    if record.status == "ok" and record.tool == "run_pipeline":
+        found = _RUN_STATUS.search(record.summary)
+        if found:
+            run_id, status = (printable(g) for g in found.groups())
+            mark = "✓" if status == "succeeded" else "✗"
+            return f"{mark} {tool}: run {run_id} {status}"
+    mark = "✓" if record.status == "ok" else "✗"
+    return f"{mark} {tool} ({record.status})"
 
 
 def list_runs(workspace: Workspace) -> list[dict[str, Any]]:

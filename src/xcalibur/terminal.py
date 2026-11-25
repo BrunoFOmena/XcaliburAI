@@ -6,6 +6,7 @@ import os
 import re
 import sys
 import threading
+import unicodedata
 from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
@@ -52,6 +53,22 @@ def strip_ansi(text: str) -> str:
     return _ANSI.sub("", text)
 
 
+def printable(text: object, keep_newlines: bool = False) -> str:
+    """``text`` safe to print: control and format characters (escape codes, ``\\r``,
+    bidirectional overrides, zero-width marks) are shown escaped, like ``repr`` does, so
+    text from the model or from file names cannot hide or rewrite what the user is reading.
+    ``keep_newlines`` keeps line breaks and tabs (multi-line answers)."""
+    out: list[str] = []
+    for char in str(text):
+        if keep_newlines and char in "\n\t":
+            out.append(char)
+        elif unicodedata.category(char) in {"Cc", "Cf", "Cs", "Co", "Zl", "Zp"}:
+            out.append(char.encode("unicode_escape").decode("ascii"))
+        else:
+            out.append(char)
+    return "".join(out)
+
+
 LOG_NAME = "nextflow.log"
 POLL_SECONDS = 0.2
 
@@ -61,7 +78,8 @@ class LogFollower:
 
     With ``from_end`` it skips what the file already holds (a resumed run appends to the
     same log); otherwise it reads from the start (a first attempt rewrites the log). It waits
-    for the file to appear, and on ``stop()`` prints whatever is left.
+    for the file to appear, and on ``stop()`` prints whatever is left. Reads hold a lock, so
+    the final read never overlaps one from a thread that did not stop in time.
     """
 
     def __init__(
@@ -76,6 +94,7 @@ class LogFollower:
         self.poll = poll
         self._offset = path.stat().st_size if from_end and path.is_file() else 0
         self._partial = ""
+        self._lock = threading.Lock()
         self._done = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="xcalibur-log", daemon=True)
 
@@ -93,6 +112,10 @@ class LogFollower:
             self._read()
 
     def _read(self, final: bool = False) -> None:
+        with self._lock:
+            self._read_locked(final)
+
+    def _read_locked(self, final: bool) -> None:
         try:
             if not self.path.is_file():
                 return
