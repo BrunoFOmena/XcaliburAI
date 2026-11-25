@@ -3,6 +3,7 @@
 import gzip
 import json
 import os
+import re
 import shutil
 import subprocess
 
@@ -125,11 +126,10 @@ def test_nextflow_reads_names_exactly_like_python(tmp_path):
         ["nextflow", "-q", "run", str(script), "--raw_data", str(raw)],
         cwd=tmp_path, capture_output=True, text=True, timeout=300, check=True,
     ).stdout
-    seen = {}
-    for line in out.splitlines():
-        if line.startswith("PARITY\t"):
-            _, name, sample, mate = line.split("\t")
-            seen[name] = (sample, mate)
+    # Read records, not lines: Nextflow 26 with -q may print view() items without newlines
+    # when stdout is not a terminal.
+    seen = {name: (sample, mate) for name, sample, mate
+            in re.findall(r"PARITY\t([^\t]+)\t([^\t]*)\t(R1|R2|SE)", out)}
     assert seen == {name: parsed for name, parsed in NAMES if parsed is not None}
 
 

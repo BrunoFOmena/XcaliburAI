@@ -9,14 +9,19 @@ Safety properties the loop guarantees:
 * the loop stops after ``max_steps`` model calls and says why;
 * every tool call is recorded in the session for audit;
 * the history stays valid for the provider: every tool call gets a result, even when
-  execution is interrupted, and an empty answer is never stored as an empty turn.
+  execution is interrupted, and an empty answer is never stored as an empty turn;
+* a call whose tool may have acted is never reported as not run: when only the audit
+  write fails the model gets the real result, and a call interrupted after its tool
+  started is reported as possibly run.
 """
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
@@ -104,6 +109,10 @@ class AgentLoop:
         self.allowed_tools = None if allowed_tools is None else list(allowed_tools)
         self._grounded_results: list[Any] = []
         """This turn's successful grounded results, as data (only their numbers count)."""
+        self._tool_started = False
+        """Whether the call being executed reached its tool function."""
+        self._confirmation: Literal["approved", "declined"] | None = None
+        """Confirmation outcome of the call being executed, if it was asked."""
 
     def tool_names(self) -> list[str]:
         return self.tools.names() if self.allowed_tools is None else list(self.allowed_tools)
@@ -180,26 +189,68 @@ class AgentLoop:
     ) -> None:
         """Run the calls and append their results; on any interruption (Ctrl+C, a failing
         audit write) the unfinished calls still get an error result before re-raising, so
-        the history never holds a tool call without its result."""
-        results: list[ToolResult] = []
+        the history never holds a tool call without its result.
+
+        A call's result is kept before its audit entry is written, so when only the audit
+        write fails the model still gets what the tool really returned. A call interrupted
+        after its tool function started is reported as possibly run, never as not run."""
+        outcomes: list[tuple[ToolResult, ToolCallRecord]] = []
+        # Ids of records whose audit write finished, or failed with OSError (not retried).
+        written: set[int] = set()
+        current: tuple[ToolResult, ToolCallRecord] | None = None
+        attempted = 0
+        self._tool_started = False
+        self._confirmation = None
         try:
             for call in calls:
-                results.append(self._execute(step, call, context, session))
+                # Reset before counting the call, so an interruption before _execute never
+                # reports the previous call's state for this one.
+                self._tool_started = False
+                self._confirmation = None
+                attempted += 1
+                current = None
+                current = self._execute(step, call, context, session)
+                outcomes.append(current)
+                session.remember(current[1])
+                try:
+                    session.write_audit(current[1])
+                except OSError:
+                    written.add(id(current[1]))
+                    raise
+                written.add(id(current[1]))
         finally:
-            pending = calls[len(results):]
-            for call in pending:
-                payload = _error(
-                    "interrupted", "The tool call was interrupted and returned no result."
-                )
-                results.append(ToolResult(call.id, _serialize(payload), is_error=True))
+            # A Ctrl+C can land between any two lines above: a call that returned always
+            # keeps its real result and its record, and its audit line is written again if
+            # its write did not finish (at worst it appears twice, never zero times).
+            if current is not None and (not outcomes or outcomes[-1] is not current):
+                outcomes.append(current)
+            results = [result for result, _ in outcomes]
+            done = len(outcomes)
+            pending = calls[done:]
+            contents = [
+                _serialize(_interrupted(started=index < attempted and self._tool_started))
+                for index in range(done, len(calls))
+            ]
+            for call, content in zip(pending, contents, strict=True):
+                results.append(ToolResult(call.id, content, is_error=True))
             session.messages.append(Message(role="user", tool_results=tuple(results)))
-            for call in pending:
-                _record_quietly(session, step, call, "interrupted")
+            for _, record in outcomes:
+                if id(record) not in written:
+                    _audit_quietly(session, record)
+            # The pending calls never got a record: the one interrupted had not reached it
+            # (it keeps the confirmation it got), and the others did not start.
+            for index, (call, content) in enumerate(zip(pending, contents, strict=True), done):
+                confirmation = self._confirmation if index < attempted else None
+                _record_quietly(session, step, call, content, confirmation)
 
     def _execute(
         self, step: int, call: ToolCall, context: ToolContext, session: Session
-    ) -> ToolResult:
+    ) -> tuple[ToolResult, ToolCallRecord]:
+        """Run one call; return the result for the model and its audit record (written by
+        the caller, after the result is safe)."""
         started = now()
+        self._tool_started = False
+        self._confirmation = None
         tool: Tool | None = None
         confirmation: Literal["approved", "declined"] | None = None
         status: ToolCallStatus
@@ -210,6 +261,7 @@ class AgentLoop:
             if tool.requires_confirmation:
                 approved, plan = self._confirm(call.name, tool, args, context)
                 confirmation = "approved" if approved else "declined"
+                self._confirmation = confirmation
                 if not approved:
                     raise ToolError(
                         "The user did not confirm; nothing was executed.",
@@ -218,6 +270,7 @@ class AgentLoop:
                     )
                 # The tool can check that what it runs is exactly what was approved.
                 call_context = replace(context, approved_plan=plan)
+            self._tool_started = True  # from here on the tool may have acted
             payload: Any = {"result": tool.func(args, call_context)}
             status = "ok"
         except _UnknownTool as exc:
@@ -235,9 +288,14 @@ class AgentLoop:
 
         try:
             text = _serialize(payload)
-        except ValueError as exc:  # e.g. a circular structure returned by a tool
+        except Exception as exc:  # noqa: BLE001 - circular, too deep (RecursionError), bad type
             status = "internal_error"
-            text = _serialize(_error("internal_error", f"Result is not serializable: {exc}"))
+            text = _serialize(
+                _error(
+                    "internal_error",
+                    f"Result is not serializable: {type(exc).__name__}: {str(exc)[:300]}",
+                )
+            )
         content, truncated, saved = self._bounded(step, call.id, text, session)
         record = ToolCallRecord(
             step=step,
@@ -252,10 +310,10 @@ class AgentLoop:
             result_path=None if saved is None else str(saved),
             summary=content[:500],
         )
-        session.record(record)
         if status == "ok" and tool is not None and tool.grounded:
             self._grounded_results.append(json.loads(text))
-        return ToolResult(tool_call_id=call.id, content=content, is_error=status != "ok")
+        result = ToolResult(tool_call_id=call.id, content=content, is_error=status != "ok")
+        return result, record
 
     def _tool(self, name: str) -> Tool:
         names = self.tool_names()
@@ -271,34 +329,59 @@ class AgentLoop:
         if not isinstance(plan, dict):
             plan = {"preview": plan}
         summary = plan.get("command_text") or f"{name}({args.model_dump_json()})"
+        # The policy gets a copy: whatever it does to it, the tool is compared against
+        # the plan as it was shown.
         request = ConfirmationRequest(
             tool=name,
             arguments=args.model_dump(mode="json"),
             summary=str(summary),
-            details=plan,
+            details=copy.deepcopy(plan),
         )
         return bool(self.confirmation.confirm(request)), plan
 
     def _bounded(
         self, step: int, call_id: str, text: str, session: Session
-    ) -> tuple[str, bool, Any]:
+    ) -> tuple[str, bool, Path | None]:
+        """Fit ``text`` in ``max_result_chars``: a long result is saved to a file and the
+        model gets a note with a preview. The note always fits: the preview shrinks first,
+        then the path is made relative to the session directory, then left out (the audit
+        record keeps the full path)."""
         if len(text) <= self.max_result_chars:
             return text, False, None
-        saved = session.save_result(step, call_id, text)
+        saved: Path | None = None
+        save_error: str | None = None
+        try:
+            saved = session.save_result(step, call_id, text)
+        except OSError as exc:  # the result still reaches the model, as a preview
+            save_error = f"{type(exc).__name__}: {exc}"[:300]
+        extras: list[dict[str, Any]] = []
+        if saved is not None:
+            extras.append({"full_result_path": str(saved)})
+            if session.directory is not None:
+                relative = saved.relative_to(session.directory).as_posix()
+                extras.append({"full_result_path": relative, "relative_to": "session directory"})
+        elif save_error is not None:
+            extras.append({"full_result_path": None, "save_error": save_error})
+        extras.append({"full_result_path": None})
+        for extra in extras:
+            note = self._note(text, extra)
+            if note is not None:
+                return note, True, saved
+        raise AssertionError("unreachable: the bare note fits in the minimum limit")
+
+    def _note(self, text: str, extra: dict[str, Any]) -> str | None:
+        """Truncation note with the longest preview that fits, or None if none does."""
         keep = self.max_result_chars
         while True:
             note = _serialize(
-                {
-                    "truncated": True,
-                    "total_chars": len(text),
-                    "full_result_path": None if saved is None else str(saved),
-                    "preview": text[:keep],
-                }
+                {"truncated": True, "total_chars": len(text), **extra, "preview": text[:keep]}
             )
             # Escaping can make the note longer than the preview; shrink until it fits.
             excess = len(note) - self.max_result_chars
-            if excess <= 0 or keep == 0:
-                return note, True, saved
+            if excess <= 0:
+                return note
+            if keep == 0:
+                return None
             keep = max(0, keep - max(excess, 1))
 
 
@@ -371,25 +454,55 @@ def _validate(tool: Tool, arguments: Any) -> BaseModel:
         raise _InvalidArguments(errors) from None
 
 
-def _record_quietly(session: Session, step: int, call: ToolCall, status: ToolCallStatus) -> None:
-    """Best-effort audit entry while an interruption is already propagating."""
-    last = session.tool_calls[-1] if session.tool_calls else None
-    if last is not None and last.step == step and last.call_id == call.id:
-        return  # already recorded in memory; only writing the audit file failed
+def _record_quietly(
+    session: Session,
+    step: int,
+    call: ToolCall,
+    content: str,
+    confirmation: Literal["approved", "declined"] | None,
+) -> None:
+    """Audit entry for a call that got no result of its own, while an interruption is
+    already propagating."""
     stamp = now()
     entry = ToolCallRecord(
         step=step,
         call_id=call.id,
         tool=call.name,
         arguments=dict(call.input),
-        status=status,
+        status="interrupted",
         started_at=stamp,
         finished_at=stamp,
+        confirmation=confirmation,
+        summary=content[:500],
     )
+    _audit_quietly(session, entry)
+
+
+def _audit_quietly(session: Session, record: ToolCallRecord) -> None:
+    """Keep ``record`` in memory (once) and try to write it; a failing file write must not
+    hide the interruption that is already propagating."""
+    if not any(r is record for r in session.tool_calls):
+        session.remember(record)
     try:
-        session.record(entry)  # keeps the entry in memory even if the file write fails
+        session.write_audit(record)
     except OSError:
         pass
+
+
+def _interrupted(*, started: bool) -> dict[str, Any]:
+    if started:
+        return _error(
+            "interrupted",
+            "The tool call was interrupted while it was running; it may have run partly or "
+            "completely. Check its effects (for a run, get_run_status) before trying again.",
+            started=True,
+        )
+    return _error(
+        "interrupted",
+        "The tool call was interrupted before the tool ran (e.g. during confirmation, or "
+        "an earlier call of this step was interrupted); nothing was executed.",
+        started=False,
+    )
 
 
 def _add_user_text(session: Session, text: str) -> None:
