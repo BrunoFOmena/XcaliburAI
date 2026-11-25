@@ -203,6 +203,10 @@ class AgentLoop:
         self._confirmation = None
         try:
             for call in calls:
+                # Reset before counting the call, so an interruption before _execute never
+                # reports the previous call's state for this one.
+                self._tool_started = False
+                self._confirmation = None
                 attempted += 1
                 current = None
                 current = self._execute(step, call, context, session)

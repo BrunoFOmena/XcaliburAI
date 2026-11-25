@@ -905,19 +905,23 @@ def test_interrupted_approved_run_keeps_the_confirmation(env, tmp_path):
 
 
 @contextmanager
-def ctrl_c_before(function, marker, occurrence=0):
+def ctrl_c_before(function, marker, occurrence=0, hit=1):
     """Raise KeyboardInterrupt once, just before the line of ``function`` holding the
-    ``occurrence``-th ``marker`` runs (where CPython could deliver a real SIGINT)."""
+    ``occurrence``-th ``marker`` runs for the ``hit``-th time (where CPython could deliver
+    a real SIGINT)."""
     lines, first = inspect.getsourcelines(function)
     target = first + [i for i, line in enumerate(lines) if marker in line][occurrence]
     code = function.__code__
     fired = False
+    seen = 0
 
     def local(frame, event, arg):
-        nonlocal fired
+        nonlocal fired, seen
         if event == "line" and frame.f_lineno == target and not fired:
-            fired = True
-            raise KeyboardInterrupt
+            seen += 1
+            if seen == hit:
+                fired = True
+                raise KeyboardInterrupt
         return local
 
     def tracer(frame, event, arg):
@@ -974,3 +978,31 @@ def test_ctrl_c_anywhere_after_a_call_returned_keeps_result_and_audit(
     ]
     audit = [json.loads(line) for line in (tmp_path / "s" / "audit.jsonl").open()]
     assert [(a["call_id"], a["status"]) for a in audit] == expected_audit
+
+
+def test_ctrl_c_before_the_next_call_does_not_inherit_the_previous_state(env, tmp_path):
+    *_, engine, context = env
+    provider = FakeProvider.scripted(
+        Completion(
+            text="",
+            tool_calls=[
+                ToolCall("c1", "run_pipeline", RUN_ARGS),
+                ToolCall("c2", "list_domains", {}),
+            ],
+        )
+    )
+    session = Session(directory=tmp_path / "s")
+    loop = loop_for(provider, context, confirmation=AllowAll())
+    with (
+        pytest.raises(KeyboardInterrupt),
+        ctrl_c_before(AgentLoop._run_calls, "current = None", hit=2),  # 2nd call, not started
+    ):
+        loop.run("run", session)
+
+    assert len(engine.runs) == 1
+    second, _ = result_of(session, 1)
+    assert second["error"]["type"] == "interrupted" and second["error"]["started"] is False
+    assert [(r.call_id, r.status, r.confirmation) for r in session.tool_calls] == [
+        ("c1", "ok", "approved"),
+        ("c2", "interrupted", None),
+    ]
