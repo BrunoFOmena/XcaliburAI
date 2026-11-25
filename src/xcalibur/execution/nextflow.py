@@ -66,24 +66,29 @@ class NextflowEngine:
                 return line.strip()
         return None
 
-    def run(self, spec: RunSpec) -> RunResult:
-        command = self.build_command(spec)
-        if spec.dry_run:
-            return RunResult(run_id=spec.run_id, status="planned", command=command)
-        if spec.workspace is None:
-            raise ValueError("A workspace is required to execute a run (dry_run=False).")
+    def check_available(self) -> None:
+        """Raise if a real run cannot start here: an unsupported platform
+        (``UnsupportedPlatformError``) or no Nextflow executable (``EngineNotFoundError``).
+        Callers use it to fail before printing or creating anything."""
         if not supports_execution():
             raise UnsupportedPlatformError(
                 "Running workflows is supported on Linux and macOS only (Nextflow does not run "
                 "natively on Windows). Use WSL, or plan the run with --dry-run."
             )
-
         if shutil.which(self.executable) is None:
             raise EngineNotFoundError(
                 f"Nextflow executable '{self.executable}' was not found. Install Nextflow "
                 "(https://www.nextflow.io/docs/latest/install.html) and make sure it is on "
                 "PATH, or pass the full path to the executable."
             )
+
+    def run(self, spec: RunSpec) -> RunResult:
+        command = self.build_command(spec)
+        if spec.dry_run:
+            return RunResult(run_id=spec.run_id, status="planned", command=command)
+        if spec.workspace is None:
+            raise ValueError("A workspace is required to execute a run (dry_run=False).")
+        self.check_available()
 
         # From here on SIGINT/SIGTERM only request cancellation; they never raise, so no
         # signal can leave Nextflow running or skip the provenance record.

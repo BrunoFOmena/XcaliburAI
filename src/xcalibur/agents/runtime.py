@@ -309,6 +309,7 @@ class AgentLoop:
             truncated=truncated,
             result_path=None if saved is None else str(saved),
             summary=content[:500],
+            outcome=_outcome(payload) if status == "ok" else None,
         )
         if status == "ok" and tool is not None and tool.grounded:
             self._grounded_results.append(json.loads(text))
@@ -476,6 +477,19 @@ def _record_quietly(
         summary=content[:500],
     )
     _audit_quietly(session, entry)
+
+
+def _outcome(payload: Any) -> dict[str, Any] | None:
+    """The ``run_id`` and ``status`` of a mapping result, if it has them as plain values."""
+    result = payload.get("result") if isinstance(payload, dict) else None
+    if not isinstance(result, dict):
+        return None
+    picked = {
+        key: result[key]
+        for key in ("run_id", "status")
+        if isinstance(result.get(key), (str, int, float, bool))
+    }
+    return picked or None
 
 
 def _audit_quietly(session: Session, record: ToolCallRecord) -> None:

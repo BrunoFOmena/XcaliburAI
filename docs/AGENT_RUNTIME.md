@@ -124,7 +124,7 @@ The model is also instructed to call `plan_run` and explain the plan (domain, pa
 | `get_run_status` | `run_id` | Latest attempt's status, return code, command and the last log lines |
 | `read_results` | `run_id` | Files matching each output declared in the manifest, with sizes |
 
-Relative input paths are resolved against the workspace root (the current directory for `plan_run` without a workspace). Input paths are **not** confined to the workspace: absolute paths, `~` and `..` are accepted, because data often lives elsewhere. The command stays safe (paths are made absolute and passed as separate arguments) and the confirmation shows every input path; checks specific to a domain's data belong to the domain package, through the `validate_inputs` hook ([DOMAIN_PACKAGES.md](DOMAIN_PACKAGES.md#input-validation-hook)); its errors come back as `invalid_inputs` with an `errors` list the model can act on. Parameters go through `DomainManifest.resolve_params` (unknown or out-of-range values are errors).
+Relative input paths are resolved against the workspace root (the current directory for `plan_run` without a workspace). Input paths are **not** confined to the workspace: absolute paths, `~` and `..` are accepted, because data often lives elsewhere. The command stays safe (paths are made absolute, normalised so `ws/../fastq` becomes `fastq`, and passed as separate arguments) and the confirmation shows every input path; checks specific to a domain's data belong to the domain package, through the `validate_inputs` hook ([DOMAIN_PACKAGES.md](DOMAIN_PACKAGES.md#input-validation-hook)); its errors come back as `invalid_inputs` with an `errors` list the model can act on. Normalisation is textual (`os.path.normpath`): symlinks are not followed, so the command and the run record keep the name the user gave, and `link/..` means the folder holding `link`. Parameters go through `DomainManifest.resolve_params` (unknown or out-of-range values are errors).
 
 ## Domain tools and agents
 
@@ -140,7 +140,7 @@ The ECHOLAS package is the reference: [`xcalibur_echolas/__init__.py`](../packag
 
 ## Audit (`agents/session.py`)
 
-`Session` holds the message history and a `ToolCallRecord` per call: step, call id, tool, arguments as sent by the model, status, start and end times, confirmation outcome, whether the result was truncated and where it was saved. With `Session(directory=...)`, each record is appended to `audit.jsonl` and long results go to `tool-results/<n>-step<step>-<call id>.json`, numbered across the session and created exclusively, so a file is never overwritten, not even by another session writing to the same directory at the same time. Long-term persistence of sessions is not built yet.
+`Session` holds the message history and a `ToolCallRecord` per call: step, call id, tool, arguments as sent by the model, status, start and end times, confirmation outcome, whether the result was truncated and where it was saved, and `outcome`: for a successful call whose result is a mapping, its `run_id` and `status` (taken before truncation; the chat uses it to show a run's own status). With `Session(directory=...)`, each record is appended to `audit.jsonl` and long results go to `tool-results/<n>-step<step>-<call id>.json`, numbered across the session and created exclusively, so a file is never overwritten, not even by another session writing to the same directory at the same time. Long-term persistence of sessions is not built yet.
 
 ## Testing without network
 

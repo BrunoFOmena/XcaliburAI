@@ -2,16 +2,26 @@
 
 import json
 import stat
+import threading
 import time
 from pathlib import Path
 
 import pytest
 
 from xcalibur import cli
+from xcalibur.agents.confirmation import ConfirmationRequest
+from xcalibur.chat import ChatApp
 from xcalibur.llm.fake import FakeProvider, tool_call
 from xcalibur.manifest import DomainManifest
 from xcalibur.registry import DomainPlugin, DomainRegistry
-from xcalibur.terminal import LogFollower, Style, color_enabled, stderr_printer, strip_ansi
+from xcalibur.terminal import (
+    LogFollower,
+    Style,
+    color_enabled,
+    printable,
+    stderr_printer,
+    strip_ansi,
+)
 
 FAKE_NEXTFLOW = """#!/bin/sh
 if [ "$1" = "-version" ]; then
@@ -158,11 +168,79 @@ def test_run_failure_exits_1_and_keeps_the_record(env, capsys):
     assert "boom" in Path(data["log_path"]).read_text()
 
 
-def test_run_without_nextflow_exits_1(env, capsys):
-    code = cli.main(["run", "demo", "-i", f"reads={env['reads']}", "--workspace", str(env["ws"]),
-                     "--nextflow", "definitely-not-installed"])
-    assert code == 1
-    assert "was not found" in capsys.readouterr().err
+def test_run_without_nextflow_exits_1_before_printing_or_creating_anything(env, capsys):
+    args = ["run", "demo", "-i", f"reads={env['reads']}", "--workspace", str(env["ws"]),
+            "--nextflow", "definitely-not-installed"]
+    assert cli.main(args) == 1
+    err = capsys.readouterr().err
+    assert "was not found" in err and "Running" not in err
+    assert list(env["ws"].iterdir()) == []  # no runs/, data/ or reports/
+    assert cli.main([*args, "--json"]) == 1
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["error"]["type"] == "engine_not_found"
+    assert "Running" not in captured.err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["run", "demo", "-p", "bad"],
+        ["run", "demo", "-i", "noequals"],
+        ["run", "demo", "--resume"],
+        ["run", "demo", "--bogus"],
+        ["plan", "demo", "-p", "=x"],
+        ["chat", "--max-steps", "0"],
+        ["chat", "--max-steps", "many"],
+    ],
+)
+def test_usage_errors_are_json_with_json(env, capsys, argv):
+    assert cli.main([*argv, "--json"]) == 2
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert data["status"] == "error" and data["error"]["type"] == "usage_error"
+    assert data["error"]["message"] in captured.err
+    # Without --json, stdout stays empty and the error is one line on stderr.
+    assert cli.main(argv) == 2
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err.startswith("error: ")
+
+
+@pytest.mark.parametrize("flag", ["--js", "--j", "--jso"])
+def test_usage_errors_are_json_with_an_abbreviated_json(env, capsys, flag):
+    assert cli.main(["run", "demo", "--bogus", flag]) == 2  # argparse fails
+    assert json.loads(capsys.readouterr().out)["error"]["type"] == "usage_error"
+    assert cli.main(["run", "demo", "-p", "bad", flag]) == 2  # argparse succeeds
+    assert json.loads(capsys.readouterr().out)["error"]["type"] == "usage_error"
+
+
+def test_usage_error_after_double_dash_is_not_json(capsys):
+    assert cli.main(["run", "--bogus", "--", "--json"]) == 2
+    assert capsys.readouterr().out == ""
+
+
+def test_plan_without_run_id_names_the_generated_id(env, capsys):
+    args = ["plan", "demo", "-i", f"reads={env['reads']}", "--nextflow", env["nextflow"]]
+    assert cli.main(args) == 0
+    captured = capsys.readouterr()
+    command = captured.out.strip()
+    assert "\n" not in command  # stdout is the command alone
+    run_id = captured.err.split("run id: ")[1].split()[0]
+    assert f"runs/{run_id}/" in command and f"--run-id {run_id}" in captured.err
+    assert cli.main([*args, "--run-id", run_id]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == command and "run id:" not in captured.err
+
+
+def test_input_paths_are_normalised_in_the_command_and_the_record(env, capsys):
+    relative = "../reads/../reads"  # from the workspace: <tmp>/ws/../reads/../reads
+    assert cli.main(["run", "demo", "-i", f"reads={relative}", "--workspace", str(env["ws"]),
+                     "--nextflow", env["nextflow"], "--run-id", "n1", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    expected = str(env["reads"])
+    assert expected in data["command"] and ".." not in " ".join(data["command"])
+    record = json.loads((env["ws"] / "runs" / "n1" / "run-n1.json").read_text())
+    assert expected in record["command"]
+    assert all(".." not in str(v) for v in record["inputs"].values())
 
 
 def test_dry_run_matches_plan_and_touches_nothing(env, capsys):
@@ -249,6 +327,87 @@ def test_chat_confirmation_shows_the_profile(env, chat, capsys):
     assert "profile  test" in out
     record = json.loads((env["ws"] / "runs" / "c1" / "run-c1.json").read_text())
     assert record["command"][record["command"].index("-profile") + 1] == "test"
+
+
+def test_chat_shows_the_run_status_after_run_pipeline(env, chat, capsys):
+    replies = [tool_call("run_pipeline", **run_args(env), params={"mode": "FAIL"}),
+               "The run failed."]
+    code, _, _ = chat(replies, ["run it", "y"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "✗ run_pipeline: run c1 failed" in out
+    assert "run_pipeline (ok)" not in out
+
+
+def test_chat_run_line_uses_the_structured_outcome_not_the_summary():
+    from datetime import UTC, datetime
+
+    from xcalibur.agents.session import ToolCallRecord
+    from xcalibur.chat import _call_line
+
+    stamp = datetime.now(UTC)
+    truncated = ToolCallRecord(
+        step=1, call_id="c", tool="run_pipeline", arguments={}, status="ok",
+        started_at=stamp, finished_at=stamp, truncated=True,
+        summary='{"truncated": true, "preview": "{\\"run_id\\": ...',
+        outcome={"run_id": "c9", "status": "failed"},
+    )
+    assert _call_line(truncated) == "✗ run_pipeline: run c9 failed"
+    truncated.outcome = {"run_id": "c9", "status": "succeeded"}
+    assert _call_line(truncated) == "✓ run_pipeline: run c9 succeeded"
+    truncated.outcome = None
+    assert _call_line(truncated) == "✓ run_pipeline (ok)"
+
+
+def test_chat_confirmation_escapes_control_characters_in_file_names(env, chat, capsys):
+    hostile = env["reads"].parent / "reads\x1b[2K\rclean"
+    hostile.mkdir()
+    replies = [tool_call("run_pipeline", domain="demo", inputs={"reads": str(hostile)},
+                         run_id="c1"), "Started.\x1b[2J\nDone."]
+    code, _, _ = chat(replies, ["run it", "n"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "\x1b" not in out and "\r" not in out  # nothing raw reaches the terminal
+    assert "reads\\x1b[2K\\rclean" in out  # shown escaped in the inputs and the command
+    command_line = next(line for line in out.splitlines() if line.startswith("  command  "))
+    assert env["nextflow"] in command_line and "reads\\x1b[2K\\rclean" in command_line
+    assert "Started.\\x1b[2J\nDone." in out  # the answer keeps its line break
+
+
+def test_confirmation_escapes_control_characters_in_parameters():
+    request = ConfirmationRequest(
+        tool="run_pipeline",
+        arguments={},
+        summary="nextflow run main.nf --label 'ok\x1b[2K\rnextflow run harmless.nf'",
+        details={"domain": "demo", "params": {"label": "evil\x1b[2K\rlooks fine"},
+                 "inputs": {"reads": "/data/\u202ereads"}},
+    )
+    app = ChatApp.__new__(ChatApp)  # only the formatting is under test
+    app.style = Style(False)
+    text = app._plan_text(request)
+    assert "\x1b" not in text and "\r" not in text and "\u202e" not in text
+    assert "label = evil\\x1b[2K\\rlooks fine" in text
+    assert "/data/\\u202ereads" in text
+    assert ("command  nextflow run main.nf --label 'ok\\x1b[2K\\rnextflow run harmless.nf'"
+            in text)
+
+
+def test_printable_escapes_control_and_format_characters():
+    assert printable("a\x1b[31mb\rc\x07") == "a\\x1b[31mb\\rc\\x07"
+    assert printable("x\u202ey\u200bz") == "x\\u202ey\\u200bz"
+    assert printable("line 1\nline 2\tok", keep_newlines=True) == "line 1\nline 2\tok"
+    assert printable("line 1\nline 2") == "line 1\\nline 2"
+    assert printable("ação · ✓ 測試") == "ação · ✓ 測試"
+    # A literal backslash is doubled, so it never reads like an escaped character...
+    assert printable("lit\\x1b real\x1b") == "lit\\\\x1b real\\x1b"
+    # ...except in prose, where backslashes stay as written.
+    assert printable("C:\\data\n", keep_newlines=True) == "C:\\data\n"
+
+
+def test_chat_help_explains_ctrl_c(env, chat, capsys):
+    chat([], ["/help"])
+    out = capsys.readouterr().out
+    assert "empty prompt" in out and "130" in out
 
 
 def test_chat_declined_confirmation_runs_nothing(env, chat, capsys):
@@ -376,6 +535,21 @@ def test_log_follower_streams_new_lines(tmp_path):
         time.sleep(0.01)
     follower.stop()
     assert seen == ["step 1", "step 2", "partial"]
+
+
+def test_log_follower_final_read_waits_for_a_read_in_progress(tmp_path):
+    """stop() reads under the same lock as the thread, so the two never interleave."""
+    log = tmp_path / "nextflow.log"
+    log.write_text("a\nb\n")
+    seen: list[str] = []
+    follower = LogFollower(log, seen.append, poll=0.01)
+    follower._lock.acquire()  # a read "in progress" that the final read must wait for
+    done = threading.Event()
+    threading.Thread(target=lambda: (follower._read(final=True), done.set())).start()
+    assert not done.wait(0.1)
+    follower._lock.release()
+    assert done.wait(2)
+    assert seen == ["a", "b"]
 
 
 def test_profile_reaches_the_command_and_is_validated(env, capsys):
