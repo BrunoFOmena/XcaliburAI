@@ -1,16 +1,21 @@
 """Deterministic synthetic dataset for the ECHOLAS end-to-end test.
 
-Writes a small reference genome (3 contigs, 7.5 kb) and paired-end reads for six
-samples in two clades, with known homozygous SNPs and indels inserted. Nothing here comes
-from real sequencing data. The same seed always produces byte-identical files.
+Writes a small reference genome (3 contigs, 7.5 kb) and reads for six samples in two
+clades, with known homozygous SNPs and indels inserted. Nothing here comes from real
+sequencing data. The same seed always produces byte-identical files.
+
+Each sample has its own read layout and quality profile (PROFILES), chosen so that the
+AUTO trimming mode takes every path once (issue #77): paired-end conservative,
+intermediate and aggressive, single-end basic and aggressive.
 
 Usage:
     python tests/data/make_synthetic.py OUT_DIR
 
 Layout of OUT_DIR:
     reference/synthetic.fa       reference genome
-    raw_data/<S>_R1.fastq.gz     forward reads
-    raw_data/<S>_R2.fastq.gz     reverse reads
+    raw_data/<S>_R1.fastq.gz     forward reads (paired-end samples)
+    raw_data/<S>_R2.fastq.gz     reverse reads (paired-end samples)
+    raw_data/<S>.fastq.gz        reads of the single-end samples
     truth.tsv                    inserted variants (1-based positions, VCF-style alleles)
 
 Only the standard library is used, so the CI can run it before installing anything.
@@ -32,12 +37,74 @@ SAMPLES = [s for members in CLADES.values() for s in members]
 READ_LENGTH = 100
 INSERT_MEAN = 300
 INSERT_SD = 30
-COVERAGE = 40
 ERROR_RATE = 0.002
-# Phred+33 qualities drawn per base, mean about Q36: every sample takes the conservative
-# trimming path. Values below Q31 ('?' and ':') must appear, otherwise FastQC guesses the
-# old Phred+64 encoding (a file of 'I' alone reads as Q9).
-QUALITIES = "IIIIIFFF?:"
+
+# Phred+33 qualities, drawn per base from these pools. Each pool needs characters below
+# Q31, otherwise FastQC guesses the old Phred+64 encoding (a file of 'I' alone reads as Q9).
+# AUTO picks the path from the mean quality FastQC reports (modules/trimming_qc.nf):
+# paired >= 30 conservative, 25-30 intermediate, < 25 aggressive; single >= 28 basic,
+# < 28 aggressive.
+HIGH = "IIIIIFFF?:"  # mean ~Q36.6
+
+
+@dataclass(frozen=True)
+class Profile:
+    layout: str  # "paired" or "single"
+    qualities: str  # pool each base's quality is drawn from
+    coverage: int
+    trimming: str  # results/trimmed/<path> the pipeline must choose
+    tail: int = 0  # the last `tail` bases of every read get `tail_quality` instead
+    tail_quality: str = ""
+
+    def read_qualities(self, rng: random.Random, length: int) -> str:
+        head = max(0, length - self.tail)
+        return "".join(rng.choices(self.qualities, k=head)) + self.tail_quality * (length - head)
+
+    @property
+    def characters(self) -> set[str]:
+        return set(self.qualities) | set(self.tail_quality)
+
+    def mean_quality(self, length: int = 100) -> float:
+        """The value AUTO reads: the mean of FastQC's per-base quality rows.
+
+        FastQC 0.12.1 reports positions 1-9 one by one and then in pairs (10-11, ...), so
+        for 100 bp reads there are 55 rows and the start of the read weighs more than
+        the end. The pipeline averages those rows (FASTQC_PARSE in trimming_qc.nf).
+        """
+        head = sum(ord(c) - 33 for c in self.qualities) / len(self.qualities)
+        tail = ord(self.tail_quality) - 33 if self.tail else 0.0
+
+        def quality(position: int) -> float:  # 1-based
+            return tail if position > length - self.tail else head
+
+        rows = [[p] for p in range(1, min(9, length) + 1)]
+        rows += [list(range(p, min(p + 2, length + 1))) for p in range(10, length + 1, 2)]
+        return sum(sum(quality(p) for p in row) / len(row) for row in rows) / len(rows)
+
+    def low_fraction(self, cut: int, length: int = 100) -> float:
+        """Share of a read's bases under ``cut`` (fastp drops reads above 40%)."""
+        head = sum(ord(c) - 33 < cut for c in self.qualities) / len(self.qualities)
+        tail = 1.0 if self.tail and ord(self.tail_quality) - 33 < cut else 0.0
+        return (head * (length - self.tail) + tail * self.tail) / length
+
+
+# Lower-quality reads end in a low-quality tail, as real reads do: bad bases scattered
+# over the whole read would also break GATK's local assembly (it skips bases under Q10).
+# The tails give a low mean with few enough bad bases that fastp keeps the reads.
+MID = {"qualities": "G", "tail": 35, "tail_quality": "+"}  # Q38 then Q10: mean Q28.8
+LOW = {"qualities": "G", "tail": 38, "tail_quality": "!"}  # Q38 then Q0: mean Q24.5
+
+
+# Low-quality samples get more coverage: fastp drops some reads, and HaplotypeCaller
+# ignores bases under Q10.
+PROFILES = {
+    "SA1": Profile("paired", HIGH, 40, "pe_conservative"),
+    "SA2": Profile("paired", coverage=50, trimming="pe_intermediate", **MID),
+    "SA3": Profile("paired", coverage=60, trimming="pe_aggressive", **LOW),
+    "SB1": Profile("paired", HIGH, 40, "pe_conservative"),
+    "SB2": Profile("single", HIGH, 40, "se_basic"),
+    "SB3": Profile("single", coverage=60, trimming="se_aggressive", **LOW),
+}
 MARGIN = 400  # no variant this close to a contig end (coverage and strand balance drop)
 MIN_SPACING = 60  # nor this close to another variant
 
@@ -132,10 +199,12 @@ def _mutate(rng: random.Random, read: str) -> str:
     return "".join(bases)
 
 
-def simulate_pairs(rng: random.Random, genome: dict[str, str]) -> list[tuple[str, str]]:
+def simulate_pairs(
+    rng: random.Random, genome: dict[str, str], coverage: int
+) -> list[tuple[str, str]]:
     pairs = []
     for seq in genome.values():
-        n_pairs = len(seq) * COVERAGE // (2 * READ_LENGTH)
+        n_pairs = len(seq) * coverage // (2 * READ_LENGTH)
         for _ in range(n_pairs):
             size = max(2 * READ_LENGTH, round(rng.gauss(INSERT_MEAN, INSERT_SD)))
             size = min(size, len(seq))
@@ -155,12 +224,21 @@ def _write_gz(path: Path, text: str) -> None:
         gz.write(text.encode("ascii"))
 
 
-def _fastq(rng: random.Random, sample: str, reads: list[str], mate: int) -> str:
+def _fastq(
+    rng: random.Random, sample: str, reads: list[str], mate: int, profile: Profile
+) -> str:
     records = []
     for i, read in enumerate(reads, 1):
-        qual = "".join(rng.choices(QUALITIES, k=len(read)))
+        qual = profile.read_qualities(rng, len(read))
         records.append(f"@{sample}.{i} {mate}\n{read}\n+\n{qual}\n")
     return "".join(records)
+
+
+def fastq_names(sample: str) -> list[str]:
+    """File names written for ``sample``, by its layout."""
+    if PROFILES[sample].layout == "single":
+        return [f"{sample}.fastq.gz"]
+    return [f"{sample}_R1.fastq.gz", f"{sample}_R2.fastq.gz"]
 
 
 def write_truth(path: Path, variants: list[Variant]) -> None:
@@ -194,10 +272,18 @@ def generate(out: Path, seed: int = SEED) -> list[Variant]:
     (out / "reference" / "synthetic.fa").write_text(fasta, encoding="ascii")
 
     for sample in SAMPLES:
-        pairs = simulate_pairs(rng, apply_variants(reference, variants, sample))
+        profile = PROFILES[sample]
+        pairs = simulate_pairs(rng, apply_variants(reference, variants, sample),
+                               profile.coverage)
+        if profile.layout == "single":
+            # Both reads of each fragment, as independent single-end reads.
+            reads = [read for pair in pairs for read in pair]
+            fastq = _fastq(rng, sample, reads, 1, profile)
+            _write_gz(out / "raw_data" / f"{sample}.fastq.gz", fastq)
+            continue
         for mate in (1, 2):
             reads = [pair[mate - 1] for pair in pairs]
-            fastq = _fastq(rng, sample, reads, mate)
+            fastq = _fastq(rng, sample, reads, mate, profile)
             _write_gz(out / "raw_data" / f"{sample}_R{mate}.fastq.gz", fastq)
 
     write_truth(out / "truth.tsv", variants)
