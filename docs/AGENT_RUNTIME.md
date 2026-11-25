@@ -34,11 +34,17 @@ Options:
 |---|---|---|
 | `system_prompt` | `DEFAULT_SYSTEM_PROMPT` | Tells the model to plan and explain before running, and to use only tools |
 | `max_steps` | 8 | Maximum model calls per turn |
-| `max_result_chars` | 8000 | Longer tool results are cut; the full text is saved in the session directory and its path is sent instead |
+| `max_result_chars` | 8000 (minimum 200) | Longer tool results are cut; the full text is saved in the session directory and its path is sent instead |
 | `confirmation` | `DenyAll()` | Policy for tools that act (see below) |
 | `allowed_tools` | all | Subset of tool names offered to the model |
 
 The history always stays valid for the provider: if tool execution is interrupted (Ctrl+C, a failing audit write), every unfinished call still gets an `interrupted` error result before the exception propagates, so the session can continue.
+
+What `interrupted` guarantees: it never claims that a tool did not run when it may have.
+
+- A call's result is kept before its audit entry is written. If only the audit write fails (e.g. `audit.jsonl` cannot be written), the model gets the tool's real result, the record stays in memory, and the exception still reaches the caller; only the calls after it get `interrupted`.
+- A call interrupted after its tool function started gets `"started": true` and a message saying it may have run partly or completely (for a run, check `get_run_status` before retrying). A call interrupted before that (e.g. Ctrl+C at the confirmation prompt) or never reached gets `"started": false`: nothing was executed.
+- Every such call gets its own `interrupted` audit entry, also when call ids repeat in a step; a call interrupted after its confirmation keeps it (`confirmation: "approved"`). A call that already returned keeps its real result and audit entry even when the interruption lands right after it; if the interruption cuts its line in `audit.jsonl`, the line is written again, so it may appear twice but is never missing.
 
 `LLMAgent` wraps a loop and a session as an `Agent` (`handle(AgentRequest) -> AgentResponse`). `LLMAgent.from_spec(spec, provider, tools, context)` appends `AgentSpec.instructions` to the system prompt and offers only `AgentSpec.tools` when the spec lists them. Those are the names the model sees, so a domain tool is listed with its prefix (`echolas__count_samples`, not `count_samples`).
 
@@ -78,9 +84,9 @@ Rules:
 | Tool not offered | `{"error": {"type": "unknown_tool", "available": [...]}}` | yes | `unknown_tool` |
 | `ToolError` | `{"error": {"type": <kind>, "message": ..., ...}}` | yes | `error` |
 | Confirmation declined | `{"error": {"type": "confirmation_declined", "plan": {...}}}` | yes | `declined` |
-| Unexpected exception | `{"error": {"type": "internal_error", "message": "<Type>: <msg>"}}` | yes | `internal_error` |
-| Interrupted (Ctrl+C, audit write failed) | `{"error": {"type": "interrupted", ...}}`, then the exception propagates | yes | `interrupted` |
-| Too long | `{"truncated": true, "total_chars": N, "full_result_path": ..., "preview": ...}`; the whole note, escaping included, fits in `max_result_chars` | as above | as above |
+| Unexpected exception, or a result that cannot be serialized (circular, nested too deep, a value whose text form fails) | `{"error": {"type": "internal_error", "message": "<Type>: <msg>"}}`; the loop continues | yes | `internal_error` |
+| Interrupted (Ctrl+C, audit write failed) | `{"error": {"type": "interrupted", "started": true/false, ...}}`, then the exception propagates (see above) | yes | `interrupted` |
+| Too long | `{"truncated": true, "total_chars": N, "full_result_path": ..., "preview": ...}`; the whole note, escaping included, always fits in `max_result_chars`: the preview shrinks first, then the path is given relative to the session directory (`"relative_to": "session directory"`), then left out (`null`); the audit record always keeps the full path. If the file cannot be saved, `full_result_path` is `null` and `save_error` says why | as above | as above |
 
 Nothing runs when the arguments are invalid, the tool is unknown or the confirmation is declined.
 
@@ -88,11 +94,14 @@ Nothing runs when the arguments are invalid, the tool is unknown or the confirma
 
 A model can write a convincing number that no file contains. When a turn used at least one tool with `grounded=True`, the loop checks the final answer before returning it:
 
-1. Every number written in the answer (not identifiers like `PC1` or `SA2`, nor list markers) must match a number in that turn's successful grounded results, or in the user's message, at the precision shown: `78,2%` and `78%` match `78.18`. Decimal commas and thousands separators are understood.
+1. Every number written in the answer must match a number in that turn's successful grounded results, or in the user's message, at the precision shown: `78,2%` and `78%` match `78.18`. Decimal commas and thousands separators are understood. Identifiers (`PC1`, `SA2`), issue references (`#52`) and list markers are not numbers.
+   - Only **numeric values** of a result count. Numbers inside its strings (a rule such as `"UFBoot >= 95"`, a note, a caveat) do not; a tool that wants a threshold to be quotable returns it as a number.
+   - A **percentage** (`95%`, `95 por cento`, `95 percent`) must match a value under a key containing `percent` or `pct`.
+   - Numbers **written as words**, zero to one hundred, in Portuguese and English (`seis`, `vinte e sete`, `twenty-seven`), are checked too; `um`, `uma` and `one` are skipped because they are mostly articles or pronouns.
 2. If some do not match, the model gets one message, `[grounding check] ...`, naming them, and one more step to rewrite the answer (this uses one of `max_steps`).
 3. If the rewritten answer still has untraced numbers, it is returned with a warning that lists them, and `LoopResult.ungrounded_numbers` holds them.
 
-Turns that used no grounded tool are not checked. The check is a safety net, not a proof: numbers written as words, and numbers that happen to appear in a result for another reason (`95` when a result states the rule `UFBoot >= 95`), are not caught. The default system prompt also tells the model to copy every number from tool results.
+Turns that used no grounded tool are not checked. The check is a safety net, not a proof: a wrong number that equals another numeric value of the same kind in the results still passes, and fractions written as words ("metade", "two thirds") are not read. The default system prompt also tells the model to copy every number from tool results.
 
 ## Confirmation (`agents/confirmation.py`)
 
@@ -131,7 +140,7 @@ The ECHOLAS package is the reference: [`xcalibur_echolas/__init__.py`](../packag
 
 ## Audit (`agents/session.py`)
 
-`Session` holds the message history and a `ToolCallRecord` per call: step, call id, tool, arguments as sent by the model, status, start and end times, confirmation outcome, whether the result was truncated and where it was saved. With `Session(directory=...)`, each record is appended to `audit.jsonl` and long results go to `tool-results/<n>-step<step>-<call id>.json`, numbered across the session so a file is never overwritten. Long-term persistence of sessions is not built yet.
+`Session` holds the message history and a `ToolCallRecord` per call: step, call id, tool, arguments as sent by the model, status, start and end times, confirmation outcome, whether the result was truncated and where it was saved. With `Session(directory=...)`, each record is appended to `audit.jsonl` and long results go to `tool-results/<n>-step<step>-<call id>.json`, numbered across the session and created exclusively, so a file is never overwritten, not even by another session writing to the same directory at the same time. Long-term persistence of sessions is not built yet.
 
 ## Testing without network
 

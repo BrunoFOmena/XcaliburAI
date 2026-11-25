@@ -33,14 +33,15 @@ def test_layout_and_variants(tmp_path):
     variants = synth.generate(tmp_path)
     fasta = (tmp_path / "reference" / "synthetic.fa").read_text()
     assert [line[1:] for line in fasta.splitlines() if line.startswith(">")] == list(synth.CONTIGS)
+    written = sorted(p.name for p in (tmp_path / "raw_data").iterdir())
+    assert written == sorted(n for s in synth.SAMPLES for n in synth.fastq_names(s))
     for sample in synth.SAMPLES:
-        for mate in (1, 2):
-            path = tmp_path / "raw_data" / f"{sample}_R{mate}.fastq.gz"
-            with gzip.open(path, "rt") as fh:
+        for name in synth.fastq_names(sample):
+            with gzip.open(tmp_path / "raw_data" / name, "rt") as fh:
                 header, seq, plus, qual = (next(fh).strip() for _ in range(4))
             assert header.startswith(f"@{sample}.1") and plus == "+"
             assert len(seq) == len(qual) == synth.READ_LENGTH
-            assert set(qual) <= set(synth.QUALITIES)
+            assert set(qual) <= synth.PROFILES[sample].characters
     assert synth.read_truth(tmp_path / "truth.tsv") == variants
     # Every sample differs from every other, so PCA and the tree have signal.
     profiles = {s: {v for v in variants if s in v.samples} for s in synth.SAMPLES}
@@ -61,3 +62,30 @@ def test_sample_alleles_are_applied(tmp_path):
             start = v.pos - 1 + shift[v.contig]
             assert genome[v.contig][start : start + len(v.alt)] == v.alt
             shift[v.contig] += len(v.alt) - len(v.ref)
+
+
+def test_profiles_send_each_sample_down_its_trimming_path():
+    """The AUTO thresholds of modules/trimming_qc.nf, applied to each profile's mean."""
+    paths = []
+    for sample, profile in synth.PROFILES.items():
+        q = profile.mean_quality(synth.READ_LENGTH)
+        if profile.layout == "paired":
+            expected = ("pe_conservative" if q >= 30 else
+                        "pe_intermediate" if q >= 25 else "pe_aggressive")
+        else:
+            expected = "se_basic" if q >= 28 else "se_aggressive"
+        assert profile.trimming == expected, (sample, q)
+        paths.append(profile.trimming)
+        # FastQC guesses Phred+64 when no character is below Q31.
+        assert min(ord(c) - 33 for c in profile.characters) < 31
+    assert sorted(set(paths)) == ["pe_aggressive", "pe_conservative", "pe_intermediate",
+                                  "se_aggressive", "se_basic"]
+
+
+def test_low_quality_tails_keep_reads_through_fastp():
+    """fastp drops a read with more than 40% of bases under its quality cut, so the
+    bad tail must stay under that, at the cut of the path the sample takes."""
+    cuts = {"pe_intermediate": 25, "pe_aggressive": 30, "se_aggressive": 30}
+    for sample, profile in synth.PROFILES.items():
+        if profile.trimming in cuts:
+            assert profile.low_fraction(cuts[profile.trimming], synth.READ_LENGTH) < 0.4, sample

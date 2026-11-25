@@ -54,6 +54,7 @@ docker run --rm ghcr.io/brunofomena/xcalibur-echolas:0.0.0 bash /opt/echolas/che
 
 - [`docker/Dockerfile`](docker/Dockerfile) installs both locks on `mambaorg/micromamba:2.0.5-debian12-slim`, and the build fails if any tool is missing or at another version ([`docker/check-tools.sh`](docker/check-tools.sh)). The list is kept in the image at `/opt/echolas/tool-versions.tsv`.
 - The tag is the package version. It is set in `manifest.yaml` (`workflow.container`, recorded in each run's provenance as `container`) and in the `docker` profile of `nextflow.config`.
+- Each run's record (`run-<id>.json`) lists, under `software.tools`, the version of every tool its tasks used: from the conda environments with `standard`, or from the image's `/opt/echolas/tool-versions.tsv` (named by the label `org.xcalibur.tool-versions`) with `docker`, together with the image id and digests.
 - To change a version, edit the `.yml` file and the matching `conda` directive, then run `docker/lock.sh` (needs micromamba) to regenerate the locks.
 - Publishing: the image is meant for `ghcr.io/brunofomena/xcalibur-echolas:<version>`, pushed when a version is released. The CI (`container` job) builds it on every PR, checks the tools and runs the smoke test with `-profile test,docker`, but does not publish it yet; until then, build it locally with the command above.
 
