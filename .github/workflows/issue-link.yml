@@ -21,7 +21,7 @@ jobs:
     # Dependabot PRs cannot reference project issues.
     if: github.actor != 'dependabot[bot]'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Require a closing reference to an open issue
         env:
           GH_TOKEN: ${{ github.token }}
