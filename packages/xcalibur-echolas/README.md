@@ -6,6 +6,20 @@ The Nextflow pipeline in [`src/xcalibur_echolas/workflow`](src/xcalibur_echolas/
 
 Limitation: variant calling assumes a diploid organism (`HaplotypeCaller --ploidy 2`).
 
+## Trimming (mode AUTO)
+
+AUTO picks a path per sample from the mean quality FastQC reports (the mean of its per-base rows):
+
+| Path | Chosen when | Tool and parameters |
+|---|---|---|
+| `pe_conservative` | paired, mean >= Q30 | Trimmomatic `ILLUMINACLIP:TruSeq3-PE.fa:2:30:10 LEADING:20 TRAILING:20 SLIDINGWINDOW:4:20 MINLEN:36` |
+| `pe_intermediate` | paired, Q25-Q30 | fastp `--cut_tail --cut_right -W 4 -M 15 -q 15 -u 40 -l 50`, adapters, poly-G/X, low complexity |
+| `pe_aggressive` | paired, < Q25 | the same plus `--cut_front` and `--complexity_threshold 30` |
+| `se_basic` | single-end, >= Q28 | fastp `--cut_tail -W 4 -M 15 -q 15 -u 40 -l 36` |
+| `se_aggressive` | single-end, < Q28 | fastp `--cut_front --cut_tail --cut_right -W 4 -M 15 -q 15 -u 40 -l 50`, poly-G/X, low complexity 30 |
+
+The fastp paths **trim** low-quality bases with a 4-base sliding window at Q15 and only then filter what is left (#81). Before, they only filtered: with `--qualified_quality_phred 30` and fastp's 40% limit, a sample of low quality could lose nearly all its reads. Q15, the window and the 50 bp minimum follow the read processing of Franssen et al. 2020 (eLife 9:e51243) for the *L. donovani* complex (Trimmomatic `TRAILING:15 SLIDINGWINDOW:4:15 MINLEN:50`, which is fastp `--cut_tail --cut_right -M 15`). Studies of variant calling find quality trimming changes few calls (Bush 2020, Microbial Genomics 7:000434; Liu et al. 2012, BMC Genomics) and gentle thresholds lose less data (MacManes 2014, Front. Genet. 5:13), since BWA-MEM soft-clips poor read ends and HaplotypeCaller weighs each base by its quality. A benchmark of these choices with known truth is tracked in #83.
+
 ## Running environment
 
 The pipeline runs in either of two ways, with the same tool versions:
