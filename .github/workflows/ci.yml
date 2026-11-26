@@ -116,7 +116,7 @@ jobs:
           pytest -m e2e -v
       - name: Upload the run on failure
         if: failure() && steps.scope.outputs.run == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-run-${{ github.run_id }}
           path: ${{ env.XCALIBUR_E2E_WORKDIR }}
@@ -207,7 +207,7 @@ jobs:
           pytest -m e2e -v
       - name: Upload the run on failure
         if: failure() && steps.scope.outputs.run == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: container-run-${{ github.run_id }}
           path: ${{ env.XCALIBUR_E2E_WORKDIR }}
