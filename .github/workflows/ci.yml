@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]" -e packages/xcalibur-echolas
@@ -34,7 +34,7 @@ jobs:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]" -e packages/xcalibur-echolas
@@ -76,7 +76,7 @@ jobs:
           echo "NXF_CONDA_CACHEDIR=$RUNNER_TEMP/e2e-conda" >> "$GITHUB_ENV"
           echo "XCALIBUR_E2E_WORKDIR=$RUNNER_TEMP/e2e-run" >> "$GITHUB_ENV"
       - if: steps.scope.outputs.run == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - if: steps.scope.outputs.run == 'true'
@@ -184,7 +184,7 @@ jobs:
             bash /opt/echolas/check-tools.sh /opt/echolas/envs
           docker image ls "${{ steps.scope.outputs.image }}"
       - if: steps.scope.outputs.run == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - if: steps.scope.outputs.run == 'true'
