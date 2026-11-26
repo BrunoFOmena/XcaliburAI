@@ -87,7 +87,7 @@ jobs:
       - name: Cache conda environments and Nextflow
         if: steps.scope.outputs.run == 'true'
         id: cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ env.NXF_CONDA_CACHEDIR }}
