@@ -30,6 +30,9 @@ class RunRecord(BaseModel):
     resumed: bool = False
     attempt: int = 1
     finished_at: datetime | None = None
+    software: dict[str, Any] | None = None
+    """Tools the run's tasks used: conda packages per process and container images with
+    their tool lists (see ``xcalibur.execution.software``); None when nothing ran."""
 
     @field_validator("run_id")
     @classmethod

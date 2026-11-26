@@ -6,6 +6,7 @@ as ``<domain>__<tool>`` so they never collide with these.
 
 from __future__ import annotations
 
+import os
 import shlex
 import uuid
 from pathlib import Path
@@ -373,8 +374,12 @@ def _check_inputs(plugin: DomainPlugin, inputs: dict[str, Path]) -> InputReport 
 
 
 def _resolve(base: Path, raw: str) -> Path:
+    """An absolute, normalised path: ``ws/../fastq`` becomes ``fastq`` in the command and
+    in the run record. Normalisation is textual (``os.path.normpath``), so symlinks keep the
+    name the user gave; ``link/..`` is taken as the folder holding ``link``, which may differ
+    from where the link points."""
     path = Path(raw).expanduser()
-    return (path if path.is_absolute() else base / path).absolute()
+    return Path(os.path.normpath(path if path.is_absolute() else base.absolute() / path))
 
 
 def _describe(

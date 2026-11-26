@@ -250,6 +250,8 @@ def summarize_tree(path: Path) -> dict[str, Any]:
         "split_count": len(splits),
         "supported_splits": supported,
         "unsupported_splits": len(splits) - supported,
+        # Numbers, so that an answer may quote them (text does not ground numbers, #68).
+        "support_thresholds": {"sh_alrt": SH_ALRT_MIN, "ufboot": UFBOOT_MIN},
         "support_rule": (
             f"A split is supported when SH-aLRT >= {SH_ALRT_MIN:g} and "
             f"UFBoot >= {UFBOOT_MIN:g} (IQ-TREE guidance). Splits are bipartitions of an "

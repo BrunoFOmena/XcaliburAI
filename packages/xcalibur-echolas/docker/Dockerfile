@@ -9,13 +9,6 @@
 
 FROM mambaorg/micromamba:2.0.5-debian12-slim
 
-ARG VERSION=0.0.0
-LABEL org.opencontainers.image.title="xcalibur-echolas" \
-      org.opencontainers.image.description="Tools of the ECHOLAS pipeline (XcaliburAI)" \
-      org.opencontainers.image.source="https://github.com/BrunoFOmena/XcaliburAI" \
-      org.opencontainers.image.version="${VERSION}" \
-      org.opencontainers.image.licenses="AGPL-3.0-or-later AND MIT"
-
 ENV ECHOLAS_HOME=/opt/echolas
 COPY --chown=$MAMBA_USER:$MAMBA_USER src/xcalibur_echolas/workflow/envs/ ${ECHOLAS_HOME}/envs/
 
@@ -37,3 +30,13 @@ COPY --chown=$MAMBA_USER:$MAMBA_USER docker/check-tools.sh ${ECHOLAS_HOME}/check
 # Fails the build if any tool is missing or at another version; keeps the list in the image.
 RUN bash ${ECHOLAS_HOME}/check-tools.sh ${ECHOLAS_HOME}/envs > ${ECHOLAS_HOME}/tool-versions.tsv \
  && cat ${ECHOLAS_HOME}/tool-versions.tsv
+
+# Labels last, so that changing them does not rebuild the environments. The run record
+# reads the tool list from the file org.xcalibur.tool-versions names (issue #70).
+ARG VERSION=0.0.0
+LABEL org.opencontainers.image.title="xcalibur-echolas" \
+      org.opencontainers.image.description="Tools of the ECHOLAS pipeline (XcaliburAI)" \
+      org.opencontainers.image.source="https://github.com/BrunoFOmena/XcaliburAI" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.licenses="AGPL-3.0-or-later AND MIT" \
+      org.xcalibur.tool-versions="/opt/echolas/tool-versions.tsv"

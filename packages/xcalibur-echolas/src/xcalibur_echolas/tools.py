@@ -89,6 +89,11 @@ def run_summary(args: RunArgs, ctx: ToolContext) -> dict[str, Any]:
     if len(summary["missing"]) == len(readers):
         raise ToolError(f"No ECHOLAS results found in {run_dir}.", kind="results_missing")
     summary["caveats"] = caveats(summary)
+    # The limits behind the caveats, as numbers an answer may quote (#68).
+    summary["caveat_thresholds"] = {
+        "few_samples": FEW_SAMPLES,
+        "high_missing_percent": HIGH_MISSING_PERCENT,
+    }
     return summary
 
 

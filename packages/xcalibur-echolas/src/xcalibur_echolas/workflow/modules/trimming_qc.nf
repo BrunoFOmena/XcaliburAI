@@ -88,6 +88,12 @@ process TRIM_PE_CONSERVATIVE {
 /// TRIMMING PE INTERMEDIATE — FASTP
 ////////////////////////////////////////////////////
 
+// fastp paths (issue #81): trim low-quality bases with a sliding window, then filter
+// what is left, instead of dropping whole reads. Q15 with a 4-base window and a 50 bp
+// minimum follow Franssen et al. 2020 (eLife 9:e51243, Leishmania donovani complex):
+// Trimmomatic "TRAILING:15 SLIDINGWINDOW:4:15 MINLEN:50", i.e. fastp --cut_tail and
+// --cut_right at Q15. Aggressive paths also trim the 5' end (--cut_front) and use a
+// stricter low-complexity filter. -q 15 -u 40 are fastp's defaults, applied after cutting.
 process TRIM_PE_INTERMEDIATE {
 
     conda "bioconda::fastp=1.0.1"
@@ -106,7 +112,12 @@ process TRIM_PE_INTERMEDIATE {
       -i $r1 -I $r2 \
       -o ${sample}_R1_trimmed.fastq.gz \
       -O ${sample}_R2_trimmed.fastq.gz \
-      --qualified_quality_phred 25 \
+      --cut_tail \
+      --cut_right \
+      --cut_window_size 4 \
+      --cut_mean_quality 15 \
+      --qualified_quality_phred 15 \
+      --unqualified_percent_limit 40 \
       --length_required 50 \
       --detect_adapter_for_pe \
       --trim_poly_g \
@@ -138,7 +149,13 @@ process TRIM_PE_AGGRESSIVE {
       -i $r1 -I $r2 \
       -o ${sample}_R1_trimmed.fastq.gz \
       -O ${sample}_R2_trimmed.fastq.gz \
-      --qualified_quality_phred 30 \
+      --cut_front \
+      --cut_tail \
+      --cut_right \
+      --cut_window_size 4 \
+      --cut_mean_quality 15 \
+      --qualified_quality_phred 15 \
+      --unqualified_percent_limit 40 \
       --length_required 50 \
       --detect_adapter_for_pe \
       --trim_poly_g \
@@ -170,7 +187,11 @@ process TRIM_SE_BASIC {
     fastp \
       -i $read \
       -o ${sample}_trimmed.fastq.gz \
-      --qualified_quality_phred 20 \
+      --cut_tail \
+      --cut_window_size 4 \
+      --cut_mean_quality 15 \
+      --qualified_quality_phred 15 \
+      --unqualified_percent_limit 40 \
       --length_required 36 \
       --thread ${task.cpus}
     """
@@ -197,7 +218,13 @@ process TRIM_SE_AGGRESSIVE {
     fastp \
       -i $read \
       -o ${sample}_trimmed.fastq.gz \
-      --qualified_quality_phred 30 \
+      --cut_front \
+      --cut_tail \
+      --cut_right \
+      --cut_window_size 4 \
+      --cut_mean_quality 15 \
+      --qualified_quality_phred 15 \
+      --unqualified_percent_limit 40 \
       --length_required 50 \
       --trim_poly_g \
       --trim_poly_x \

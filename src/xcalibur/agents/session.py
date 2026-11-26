@@ -35,6 +35,10 @@ class ToolCallRecord:
     """Where the full result was saved when it was too long to send back."""
     summary: str = ""
     """Start of the result sent to the model."""
+    outcome: dict[str, Any] | None = None
+    """For a successful call whose result is a mapping: its ``run_id`` and ``status``, when
+    present, taken before serialization, so they survive truncation (``run_pipeline``: the
+    run can fail while the call succeeds)."""
 
     def to_json(self) -> dict[str, Any]:
         data = asdict(self)
@@ -64,7 +68,14 @@ class Session:
         return None if self.directory is None else self.directory / "audit.jsonl"
 
     def record(self, entry: ToolCallRecord) -> None:
+        """Keep ``entry`` in memory, then append it to ``audit.jsonl`` (if any)."""
+        self.remember(entry)
+        self.write_audit(entry)
+
+    def remember(self, entry: ToolCallRecord) -> None:
         self.tool_calls.append(entry)
+
+    def write_audit(self, entry: ToolCallRecord) -> None:
         if self.audit_path is not None:
             self.audit_path.parent.mkdir(parents=True, exist_ok=True)
             with self.audit_path.open("a", encoding="utf-8") as fh:
@@ -78,12 +89,16 @@ class Session:
         folder.mkdir(parents=True, exist_ok=True)
         # Numbered across the whole session: steps restart each turn and ids may repeat.
         seq = len(list(folder.glob("*.json"))) + 1
-        path = folder / f"{seq:04d}-step{step:03d}-{safe_id}.json"
-        while path.exists():
-            seq += 1
+        while True:
             path = folder / f"{seq:04d}-step{step:03d}-{safe_id}.json"
-        path.write_text(text, encoding="utf-8")
-        return path
+            try:
+                # Exclusive create: two sessions sharing the folder never overwrite a file.
+                with path.open("x", encoding="utf-8") as fh:
+                    fh.write(text)
+            except FileExistsError:
+                seq += 1
+                continue
+            return path
 
 
 def now() -> datetime:
