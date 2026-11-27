@@ -62,6 +62,13 @@ process FASTQC_PARSE {
 // ILLUMINACLIP:...:2:True (minAdapterLength 2, keepBothReads) both mates are kept,
 // clipped to the insert. R2 then covers the same bases as R1; HaplotypeCaller does not
 // count the overlap of a pair twice.
+//
+// Quality trimming (issue #93): Franssen et al. 2020 (eLife 9:e51243, L. donovani complex),
+// "TRAILING:15 SLIDINGWINDOW:4:15 MINLEN:50", the same thresholds as the fastp paths. The
+// original Q20 (LEADING:20 TRAILING:20 SLIDINGWINDOW:4:20 MINLEN:36) dropped every read of
+// a sample at Q20 throughout. In the benchmark of #83, Q15 called fewer wrong variants:
+// -3.6 +/- 3.0 per 1000 with the quality decaying to Q10, -11.1 +/- 6.3 at 10x; with
+// inserts of ~110 bp, +0.6 +/- 0.6, because MINLEN:50 drops inserts under 50 bp.
 process TRIM_PE_CONSERVATIVE {
 
     conda "bioconda::trimmomatic=0.40"
@@ -84,9 +91,9 @@ process TRIM_PE_CONSERVATIVE {
       ${sample}_R1_paired.fastq.gz ${sample}_R1_unpaired.fastq.gz \
       ${sample}_R2_paired.fastq.gz ${sample}_R2_unpaired.fastq.gz \
       ILLUMINACLIP:TruSeq3-PE.fa:2:30:10:2:True \
-      LEADING:20 TRAILING:20 \
-      SLIDINGWINDOW:4:20 \
-      MINLEN:36
+      TRAILING:15 \
+      SLIDINGWINDOW:4:15 \
+      MINLEN:50
     """
 }
 
@@ -100,6 +107,10 @@ process TRIM_PE_CONSERVATIVE {
 // Trimmomatic "TRAILING:15 SLIDINGWINDOW:4:15 MINLEN:50", i.e. fastp --cut_tail and
 // --cut_right at Q15. Aggressive paths also trim the 5' end (--cut_front) and use a
 // stricter low-complexity filter. -q 15 -u 40 are fastp's defaults, applied after cutting.
+// --cut_tail is redundant next to --cut_right: --cut_right already cuts from the first
+// low-quality window to the end. It is kept to mirror TRAILING:15 and changes no read: on
+// simulated paired-end reads of four quality profiles (#83, #95), fastp wrote byte-identical
+// output with and without it.
 process TRIM_PE_INTERMEDIATE {
 
     conda "bioconda::fastp=1.0.1"

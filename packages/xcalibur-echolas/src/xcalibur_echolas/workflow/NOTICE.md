@@ -4,7 +4,7 @@ The files in this directory (`main.nf`, `nextflow.config`, `modules/`, `scripts/
 adapted from **ECHOLAS**, https://github.com/MCamposDA/ECHOLAS, imported at commit
 `cbd7884505ed34eae3d1dfc0db6a32d98ac059f3`, and are distributed under the MIT License below.
 
-Changes made for XcaliburAI (no change to the scientific logic):
+Changes made for XcaliburAI with no change to the scientific logic:
 
 - `main.nf`: the input directories come from the `raw_data` and `reference` params
   instead of fixed `raw_data/` and `reference/` folders.
@@ -14,7 +14,6 @@ Changes made for XcaliburAI (no change to the scientific logic):
   read. `main.nf` passes the mate with each file, so `trimming_qc.nf` no longer re-reads
   it from the name. The original rule cut the name at the first `.`, removed every `_1`,
   `_2`, `_R1` and `_R2`, and looked for the mate anywhere in the name.
-- `modules/trimming_qc.nf` (#81): the fastp paths (`TRIM_PE_INTERMEDIATE`, `TRIM_PE_AGGRESSIVE`, `TRIM_SE_BASIC`, `TRIM_SE_AGGRESSIVE`) trim with a Q15 sliding window (`--cut_tail`, `--cut_right`, and `--cut_front` on the aggressive paths) and then filter with fastp's defaults (`-q 15 -u 40`), instead of filtering only at `-q 25`/`-q 30`, which dropped whole low-quality reads. Length minimums and the other filters are unchanged.
 - `nextflow.config`: a `params` block with the defaults (`mode`, `raw_data`, `reference`).
 - `modules/pca_phylogeny.nf`: helper scripts are resolved from `${projectDir}/scripts/`,
   so the pipeline runs from any launch directory.
@@ -22,11 +21,24 @@ Changes made for XcaliburAI (no change to the scientific logic):
 - Not imported: the web dashboard, the FastAPI backend, Docker files, and
   `scripts/vcf_generate_fasta.sh` (superseded by `vcf_generate_fasta2.sh`, not used by the pipeline).
 
-Changes to the scientific behaviour:
+Changes to the scientific behaviour (they change which reads, and which bases of them,
+reach the alignment):
 
+- `modules/trimming_qc.nf` (#81): the fastp paths trim low-quality bases with a 4-base
+  sliding window at Q15 (`--cut_tail`; `--cut_right` too, except on `TRIM_SE_BASIC`;
+  `--cut_front` on the aggressive paths), then filter what is left with fastp's defaults (`-q 15 -u 40`). The
+  original did not trim: it only filtered whole reads, at `--qualified_quality_phred 20`
+  (`TRIM_SE_BASIC`), `25` (`TRIM_PE_INTERMEDIATE`) or `30` (`TRIM_PE_AGGRESSIVE`,
+  `TRIM_SE_AGGRESSIVE`), with fastp's 40% limit, so a low-quality sample could lose most
+  of its reads. Length minimums and the other filters are unchanged.
+- `modules/trimming_qc.nf` (#48): AUTO decides a paired-end sample's path on the lower of
+  the two mates' FastQC means. The original used one mate, whichever FastQC finished first.
 - `modules/trimming_qc.nf` (#92): `TRIM_PE_CONSERVATIVE` sets `keepBothReads` in
   `ILLUMINACLIP` (`TruSeq3-PE.fa:2:30:10:2:True`). The original kept only R1 of a pair
   that reads into the adapter, in the unpaired output, so the pipeline lost the pair.
+- `modules/trimming_qc.nf` (#93): `TRIM_PE_CONSERVATIVE` trims at Q15 like the fastp
+  paths: `TRAILING:15 SLIDINGWINDOW:4:15 MINLEN:50`, after Franssen et al. 2020. The
+  original used `LEADING:20 TRAILING:20 SLIDINGWINDOW:4:20 MINLEN:36`.
 
 ---
 
