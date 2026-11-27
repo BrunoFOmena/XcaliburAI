@@ -106,7 +106,8 @@ def run(tmp_path_factory) -> dict:
     tail = "\n".join(log.read_text().splitlines()[-40:]) if log.exists() else "(no log)"
     assert proc.returncode == 0, f"xcalibur run exited {proc.returncode}\n{tail}"
     result = json.loads(stdout)
-    return {"result": result, "run_dir": run_dir, "variants": variants, "log_tail": tail}
+    return {"result": result, "run_dir": run_dir, "variants": variants, "log_tail": tail,
+            "raw_data": data / "raw_data"}
 
 
 def _find(run_dir: Path, pattern: str) -> Path:
@@ -180,6 +181,24 @@ def test_auto_mode_takes_every_trimming_path(run):
             sample = re.sub(r"(_R[12])?_(paired|trimmed)\.fastq\.gz$", "", path.name)
             found[sample] = folder.name
     assert found == expected
+
+
+def _reads(path: Path) -> int:
+    with gzip.open(path, "rt") as handle:
+        return sum(1 for _ in handle) // 4
+
+
+def test_conservative_path_keeps_pairs_that_read_into_the_adapter(run):
+    """#92, #106: SB1 has short-insert pairs; without keepBothReads Trimmomatic kept only
+    their R1, in the unpaired output, and the pipeline lost them (17% of SB1's pairs)."""
+    profile = synth.PROFILES["SB1"]
+    assert profile.trimming == "pe_conservative" and profile.short_inserts > 0
+    raw = _reads(run["raw_data"] / "SB1_R1.fastq.gz")
+    short = raw - round(raw / (1 + profile.short_inserts))
+    trimmed = run["run_dir"] / "results" / "trimmed" / "pe_conservative"
+    kept = [_reads(trimmed / f"SB1_R{mate}_paired.fastq.gz") for mate in (1, 2)]
+    assert kept[0] == kept[1]
+    assert raw - kept[0] < short / 10, (raw, short, kept)  # the short pairs are kept
 
 
 def test_vcf_has_exactly_the_inserted_variants(run):

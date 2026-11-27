@@ -112,3 +112,23 @@ def test_low_quality_tails_keep_reads_through_fastp():
         if profile.trimming in cuts:
             for mate in profile.mates:
                 assert mate.low_fraction(cuts[profile.trimming], synth.READ_LENGTH) < 0.4, sample
+
+
+def test_one_conservative_pair_reads_into_the_adapter(tmp_path):
+    """#106: SB1's short-insert pairs end in the TruSeq adapter, both mates, and only SB1
+    changes: the other samples' reads come from the main generator as before."""
+    synth.generate(tmp_path)
+    profile = synth.PROFILES["SB1"]
+    assert profile.trimming == "pe_conservative" and profile.short_inserts == 0.2
+    assert [p.short_inserts for s, p in synth.PROFILES.items() if s != "SB1"] == [0] * 5
+    assert synth.SHORT_INSERT[0] > 50  # above every path's minimum length
+    mates = []
+    for mate in (1, 2):
+        lines = gzip.open(tmp_path / "raw_data" / f"SB1_R{mate}.fastq.gz", "rt").read()
+        mates.append(lines.splitlines()[1::4])
+    normal = round(len(mates[0]) / 1.2)
+    for reads, adapter in zip(mates, (synth.ADAPTER_R1, synth.ADAPTER_R2), strict=True):
+        assert all(len(r) == synth.READ_LENGTH for r in reads)
+        tails = sum(adapter[:10] in r for r in reads[normal:]) / (len(reads) - normal)
+        assert tails > 0.9  # read errors can hit the 10 bases looked for
+        assert not any(adapter[:20] in r for r in reads[:normal])
