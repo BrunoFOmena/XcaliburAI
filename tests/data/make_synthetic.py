@@ -8,6 +8,8 @@ Each sample has its own read layout and quality profile (PROFILES), chosen so th
 AUTO trimming mode takes every path once (issue #77): paired-end conservative,
 intermediate and aggressive, single-end basic and aggressive. One pair has a worse R2
 than R1, as real runs often do, so the rule that combines the mates is exercised (#48).
+One conservative pair also has short inserts that read into the adapter, so the e2e test
+sees Trimmomatic keep both mates of those pairs (#92, #106).
 
 Usage:
     python tests/data/make_synthetic.py OUT_DIR
@@ -39,6 +41,13 @@ READ_LENGTH = 100
 INSERT_MEAN = 300
 INSERT_SD = 30
 ERROR_RATE = 0.002
+# Short inserts (#106): shorter than the read, so each read runs into the adapter. They
+# stay above every path's minimum length (MINLEN/--length_required, at most 50).
+SHORT_INSERT = (60, 90)
+# What a read shows after a short insert: the TruSeq adapter, as in Trimmomatic's
+# TruSeq3-PE.fa, then the rest of the Illumina adapter (a fixed index for i7).
+ADAPTER_R1 = "AGATCGGAAGAGCACACGTCTGAACTCCAGTCACACAGTGATCTCGTATGCCGTCTTCTGCTTG"
+ADAPTER_R2 = "AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGTAGATCTCGGTGGTCGCCGTATCATT"
 
 # Phred+33 qualities, drawn per base from these pools. Each pool needs characters below
 # Q31, otherwise FastQC guesses the old Phred+64 encoding (a file of 'I' alone reads as Q9).
@@ -57,6 +66,7 @@ class Profile:
     tail: int = 0  # the last `tail` bases of every read get `tail_quality` instead
     tail_quality: str = ""
     r2: Profile | None = None  # quality of the R2 reads, when it differs from R1's
+    short_inserts: float = 0.0  # extra pairs with short inserts, as a share (paired only)
 
     def mate(self, number: int) -> Profile:
         """The profile whose qualities mate ``number`` (1 or 2) is written with."""
@@ -120,7 +130,9 @@ PROFILES = {
     "SA2": Profile("paired", HIGH, 50, "pe_intermediate",
                    r2=Profile("paired", coverage=50, trimming="pe_intermediate", **MID)),
     "SA3": Profile("paired", coverage=60, trimming="pe_aggressive", **LOW),
-    "SB1": Profile("paired", HIGH, 40, "pe_conservative"),
+    # Plus 20% more pairs with 60-90 bp inserts, which read into the adapter: without
+    # Trimmomatic's keepBothReads, the conservative path lost them (#92).
+    "SB1": Profile("paired", HIGH, 40, "pe_conservative", short_inserts=0.2),
     "SB2": Profile("single", HIGH, 40, "se_basic"),
     "SB3": Profile("single", coverage=60, trimming="se_aggressive", **LOW),
 }
@@ -237,6 +249,25 @@ def simulate_pairs(
     return pairs
 
 
+def short_insert_pairs(
+    rng: random.Random, genome: dict[str, str], n_pairs: int
+) -> list[tuple[str, str]]:
+    """Pairs whose insert is shorter than the read: each read ends in its adapter."""
+    contigs = list(genome.values())
+    pairs = []
+    for _ in range(n_pairs):
+        seq = rng.choice(contigs)
+        size = rng.randint(*SHORT_INSERT)
+        start = rng.randrange(0, len(seq) - size + 1)
+        fragment = seq[start : start + size]
+        if rng.random() < 0.5:
+            fragment = revcomp(fragment)
+        r1 = _mutate(rng, (fragment + ADAPTER_R1)[:READ_LENGTH])
+        r2 = _mutate(rng, (revcomp(fragment) + ADAPTER_R2)[:READ_LENGTH])
+        pairs.append((r1, r2))
+    return pairs
+
+
 def _write_gz(path: Path, text: str) -> None:
     # mtime=0 and no file name in the header: the output depends on the content only.
     with path.open("wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", filename="", mtime=0) as gz:
@@ -244,10 +275,11 @@ def _write_gz(path: Path, text: str) -> None:
 
 
 def _fastq(
-    rng: random.Random, sample: str, reads: list[str], mate: int, profile: Profile
+    rng: random.Random, sample: str, reads: list[str], mate: int, profile: Profile,
+    first: int = 1,
 ) -> str:
     records = []
-    for i, read in enumerate(reads, 1):
+    for i, read in enumerate(reads, first):
         qual = profile.read_qualities(rng, len(read))
         records.append(f"@{sample}.{i} {mate}\n{read}\n+\n{qual}\n")
     return "".join(records)
@@ -292,8 +324,12 @@ def generate(out: Path, seed: int = SEED) -> list[Variant]:
 
     for sample in SAMPLES:
         profile = PROFILES[sample]
-        pairs = simulate_pairs(rng, apply_variants(reference, variants, sample),
-                               profile.coverage)
+        genome = apply_variants(reference, variants, sample)
+        pairs = simulate_pairs(rng, genome, profile.coverage)
+        # Short-insert pairs use a generator of their own, for their bases and qualities,
+        # so the other samples' reads stay the same.
+        extra = random.Random(f"{seed}:{sample}:short-inserts")
+        short = short_insert_pairs(extra, genome, round(len(pairs) * profile.short_inserts))
         if profile.layout == "single":
             # Both reads of each fragment, as independent single-end reads.
             reads = [read for pair in pairs for read in pair]
@@ -303,6 +339,8 @@ def generate(out: Path, seed: int = SEED) -> list[Variant]:
         for mate in (1, 2):
             reads = [pair[mate - 1] for pair in pairs]
             fastq = _fastq(rng, sample, reads, mate, profile.mate(mate))
+            fastq += _fastq(extra, sample, [pair[mate - 1] for pair in short], mate,
+                            profile.mate(mate), first=len(reads) + 1)
             _write_gz(out / "raw_data" / f"{sample}_R{mate}.fastq.gz", fastq)
 
     write_truth(out / "truth.tsv", variants)
