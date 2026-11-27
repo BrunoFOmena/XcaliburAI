@@ -100,6 +100,10 @@ process TRIM_PE_CONSERVATIVE {
 // Trimmomatic "TRAILING:15 SLIDINGWINDOW:4:15 MINLEN:50", i.e. fastp --cut_tail and
 // --cut_right at Q15. Aggressive paths also trim the 5' end (--cut_front) and use a
 // stricter low-complexity filter. -q 15 -u 40 are fastp's defaults, applied after cutting.
+// --cut_tail is redundant next to --cut_right: --cut_right already cuts from the first
+// low-quality window to the end. It is kept to mirror TRAILING:15 and changes no read: on
+// simulated paired-end reads of four quality profiles (#83, #95), fastp wrote byte-identical
+// output with and without it.
 process TRIM_PE_INTERMEDIATE {
 
     conda "bioconda::fastp=1.0.1"
