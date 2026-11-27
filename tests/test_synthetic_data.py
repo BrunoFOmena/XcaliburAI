@@ -47,7 +47,9 @@ def test_layout_and_variants(tmp_path):
     for mate in (1, 2):
         with gzip.open(tmp_path / "raw_data" / f"SA2_R{mate}.fastq.gz", "rt") as fh:
             firsts[mate] = [next(fh).strip() for _ in range(4)][3]
-    assert "+" not in firsts[1] and firsts[2].endswith("+" * 35)
+    r2 = synth.PROFILES["SA2"].mate(2)
+    assert r2.tail > 0 and r2.tail_quality not in firsts[1]
+    assert firsts[2].endswith(r2.tail_quality * r2.tail)
     assert synth.read_truth(tmp_path / "truth.tsv") == variants
     # Every sample differs from every other, so PCA and the tree have signal.
     profiles = {s: {v for v in variants if s in v.samples} for s in synth.SAMPLES}

@@ -46,14 +46,20 @@ def test_paths_differ_only_where_intended():
 def test_auto_decides_on_the_lower_mate_of_each_pair():
     """#48: qualities are grouped per sample before the decision (join kept whichever mate
     arrived first), and the lower one decides."""
+    # Compared without comments and whitespace, so reformatting the module keeps it passing.
     text = MODULE.read_text(encoding="utf-8")
-    workflow = text[text.index("workflow TRIMMING_QC"):]
+    workflow = compact(text[text.index("workflow TRIMMING_QC"):])
     assert "join(qmetrics)" not in workflow
-    qmetrics = re.search(r"qmetrics = FASTQC_PARSE\(qc\.zip\)(.*?)\n\n", workflow, re.S).group(1)
-    assert ".groupTuple(by: 0)" in qmetrics and "qs.min()" in qmetrics
-    assert "paired.combine(qmetrics, by: 0)" in workflow
-    assert "single.combine(qmetrics, by: 0)" in workflow
+    qmetrics = re.search(r"qmetrics=FASTQC_PARSE\(qc\.zip\)(.*?)(?=pe=|$)", workflow).group(1)
+    assert ".groupTuple(by:0)" in qmetrics and ".min()" in qmetrics
+    assert "paired.combine(qmetrics,by:0)" in workflow
+    assert "single.combine(qmetrics,by:0)" in workflow
     # The mate goes through FastQC, so R1 and R2 stay apart until they are grouped.
     for process in ("FASTQC_RAW", "FASTQC_PARSE"):
-        body = re.search(rf"process {process} \{{(.*?)\n\}}", text, re.S).group(1)
-        assert "tuple val(sample), val(mate)" in body, process
+        body = compact(re.search(rf"process {process} \{{(.*?)\n\}}", text, re.S).group(1))
+        assert "input:tupleval(sample),val(mate)" in body, process
+
+
+def compact(nextflow: str) -> str:
+    """Nextflow source without ``//`` comments and whitespace."""
+    return re.sub(r"\s+", "", re.sub(r"//[^\n]*", "", nextflow))
