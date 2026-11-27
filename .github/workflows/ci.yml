@@ -129,8 +129,8 @@ jobs:
 
   # ECHOLAS image (issue #4): build it from the locked environments, check every tool's
   # version inside it, then run the end-to-end test with every step in the container
-  # (profile test,docker). Optional, like e2e; skipped for documentation-only PRs into
-  # homolog. The image is only built here, not published.
+  # (profile test,docker). Optional (unlike e2e, which is required on main); skipped for
+  # documentation-only PRs into homolog. The image is only built here, not published.
   container:
     name: container
     needs: [lint, test]
