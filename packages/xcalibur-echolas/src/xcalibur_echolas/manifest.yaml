@@ -36,7 +36,8 @@ params:
     default: AUTO
     description: >
       Trimming mode. AUTO picks conservative, intermediate or aggressive trimming per
-      sample from its mean read quality. It is the only mode the pipeline implements.
+      sample from its mean read quality (as FastQC reports it); for a paired-end sample,
+      the lower of the R1 and R2 means decides. It is the only mode the pipeline implements.
 
 outputs:
   - name: joint_vcf

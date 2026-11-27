@@ -8,7 +8,7 @@ Limitation: variant calling assumes a diploid organism (`HaplotypeCaller --ploid
 
 ## Trimming (mode AUTO)
 
-AUTO picks a path per sample from the mean quality FastQC reports (the mean of its per-base rows):
+AUTO picks a path per sample from the mean quality FastQC reports (the mean of its per-base rows). FastQC runs on each file, so a paired-end sample has two values, R1's and R2's: the **lower** one decides (#48), because the trimming applies to both mates and the worse one, usually R2, is what needs it. A pair with R1 at Q36 and R2 at Q27 takes `pe_intermediate`, in every run. A single-end sample uses the value of its only file.
 
 | Path | Chosen when | Tool and parameters |
 |---|---|---|

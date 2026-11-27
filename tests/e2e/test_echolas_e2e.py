@@ -169,7 +169,8 @@ def test_record_lists_the_tools_at_their_pinned_versions(run):
 
 
 def test_auto_mode_takes_every_trimming_path(run):
-    """Issue #77: each sample's quality profile leads AUTO down a different path."""
+    """Issue #77: each sample's quality profile leads AUTO down a different path; SA2's
+    R2 is worse than its R1, and the lower mate decides (#48)."""
     trimmed = run["run_dir"] / "results" / "trimmed"
     expected = {s: p.trimming for s, p in synth.PROFILES.items()}
     assert sorted(p.name for p in trimmed.iterdir()) == sorted(set(expected.values()))
