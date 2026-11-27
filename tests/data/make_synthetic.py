@@ -6,7 +6,8 @@ sequencing data. The same seed always produces byte-identical files.
 
 Each sample has its own read layout and quality profile (PROFILES), chosen so that the
 AUTO trimming mode takes every path once (issue #77): paired-end conservative,
-intermediate and aggressive, single-end basic and aggressive.
+intermediate and aggressive, single-end basic and aggressive. One pair has a worse R2
+than R1, as real runs often do, so the rule that combines the mates is exercised (#48).
 
 Usage:
     python tests/data/make_synthetic.py OUT_DIR
@@ -41,9 +42,9 @@ ERROR_RATE = 0.002
 
 # Phred+33 qualities, drawn per base from these pools. Each pool needs characters below
 # Q31, otherwise FastQC guesses the old Phred+64 encoding (a file of 'I' alone reads as Q9).
-# AUTO picks the path from the mean quality FastQC reports (modules/trimming_qc.nf):
-# paired >= 30 conservative, 25-30 intermediate, < 25 aggressive; single >= 28 basic,
-# < 28 aggressive.
+# AUTO picks the path from the mean quality FastQC reports (modules/trimming_qc.nf),
+# the lower of the two mates for a pair (#48): paired >= 30 conservative, 25-30
+# intermediate, < 25 aggressive; single >= 28 basic, < 28 aggressive.
 HIGH = "IIIIIFFF?:"  # mean ~Q36.6
 
 
@@ -55,6 +56,20 @@ class Profile:
     trimming: str  # results/trimmed/<path> the pipeline must choose
     tail: int = 0  # the last `tail` bases of every read get `tail_quality` instead
     tail_quality: str = ""
+    r2: Profile | None = None  # quality of the R2 reads, when it differs from R1's
+
+    def mate(self, number: int) -> Profile:
+        """The profile whose qualities mate ``number`` (1 or 2) is written with."""
+        return self.r2 if number == 2 and self.r2 is not None else self
+
+    @property
+    def mates(self) -> list[Profile]:
+        return [self.mate(1), self.mate(2)] if self.layout == "paired" else [self]
+
+    def auto_quality(self, length: int = 100) -> float:
+        """The quality AUTO decides on: the lower mean of the two mates of a pair, the
+        mean of the only file of a single-end sample (rule of modules/trimming_qc.nf, #48)."""
+        return min(m.mean_quality(length) for m in self.mates)
 
     def read_qualities(self, rng: random.Random, length: int) -> str:
         head = max(0, length - self.tail)
@@ -62,7 +77,8 @@ class Profile:
 
     @property
     def characters(self) -> set[str]:
-        return set(self.qualities) | set(self.tail_quality)
+        chars = set(self.qualities) | set(self.tail_quality)
+        return chars | self.r2.characters if self.r2 is not None else chars
 
     def mean_quality(self, length: int = 100) -> float:
         """The value AUTO reads: the mean of FastQC's per-base quality rows.
@@ -99,7 +115,10 @@ LOW = {"qualities": "G", "tail": 38, "tail_quality": "!"}  # Q38 then Q0: mean Q
 # ignores bases under Q10.
 PROFILES = {
     "SA1": Profile("paired", HIGH, 40, "pe_conservative"),
-    "SA2": Profile("paired", coverage=50, trimming="pe_intermediate", **MID),
+    # R1 ~Q36.6, R2 ~Q28.8: the lower mate decides (intermediate); their mean, Q32.7,
+    # would be conservative, and before #48 the path depended on which FastQC ended first.
+    "SA2": Profile("paired", HIGH, 50, "pe_intermediate",
+                   r2=Profile("paired", coverage=50, trimming="pe_intermediate", **MID)),
     "SA3": Profile("paired", coverage=60, trimming="pe_aggressive", **LOW),
     "SB1": Profile("paired", HIGH, 40, "pe_conservative"),
     "SB2": Profile("single", HIGH, 40, "se_basic"),
@@ -283,7 +302,7 @@ def generate(out: Path, seed: int = SEED) -> list[Variant]:
             continue
         for mate in (1, 2):
             reads = [pair[mate - 1] for pair in pairs]
-            fastq = _fastq(rng, sample, reads, mate, profile)
+            fastq = _fastq(rng, sample, reads, mate, profile.mate(mate))
             _write_gz(out / "raw_data" / f"{sample}_R{mate}.fastq.gz", fastq)
 
     write_truth(out / "truth.tsv", variants)
