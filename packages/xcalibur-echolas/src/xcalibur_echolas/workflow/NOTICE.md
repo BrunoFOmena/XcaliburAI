@@ -22,6 +22,12 @@ Changes made for XcaliburAI (no change to the scientific logic):
 - Not imported: the web dashboard, the FastAPI backend, Docker files, and
   `scripts/vcf_generate_fasta.sh` (superseded by `vcf_generate_fasta2.sh`, not used by the pipeline).
 
+Changes to the scientific behaviour:
+
+- `modules/trimming_qc.nf` (#92): `TRIM_PE_CONSERVATIVE` sets `keepBothReads` in
+  `ILLUMINACLIP` (`TruSeq3-PE.fa:2:30:10:2:True`). The original kept only R1 of a pair
+  that reads into the adapter, in the unpaired output, so the pipeline lost the pair.
+
 ---
 
 MIT License

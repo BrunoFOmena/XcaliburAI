@@ -56,6 +56,12 @@ process FASTQC_PARSE {
 /// TRIMMING PE CONSERVATIVE — TRIMMOMATIC
 ////////////////////////////////////////////////////
 
+// keepBothReads (issue #92): in palindrome mode Trimmomatic finds pairs that read into the
+// adapter (inserts shorter than the read) and by default keeps only R1, written to the
+// unpaired file. Only *_paired.fastq.gz go on, so those pairs were lost. With
+// ILLUMINACLIP:...:2:True (minAdapterLength 2, keepBothReads) both mates are kept,
+// clipped to the insert. R2 then covers the same bases as R1; HaplotypeCaller does not
+// count the overlap of a pair twice.
 process TRIM_PE_CONSERVATIVE {
 
     conda "bioconda::trimmomatic=0.40"
@@ -77,7 +83,7 @@ process TRIM_PE_CONSERVATIVE {
       $r1 $r2 \
       ${sample}_R1_paired.fastq.gz ${sample}_R1_unpaired.fastq.gz \
       ${sample}_R2_paired.fastq.gz ${sample}_R2_unpaired.fastq.gz \
-      ILLUMINACLIP:TruSeq3-PE.fa:2:30:10 \
+      ILLUMINACLIP:TruSeq3-PE.fa:2:30:10:2:True \
       LEADING:20 TRAILING:20 \
       SLIDINGWINDOW:4:20 \
       MINLEN:36
