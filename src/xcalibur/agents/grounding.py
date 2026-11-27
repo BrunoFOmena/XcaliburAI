@@ -18,6 +18,12 @@ Rules (#68):
   and English (``seis``, ``vinte e sete``, ``twenty-seven``). ``um``, ``uma`` and ``one``
   are left out: they are mostly articles or pronouns.
 * The user's message counts as a source for any number it contains.
+* **Scientific notation** (``1e-5``, ``2.3E+4``) is read as one number, at the precision of
+  its mantissa: ``2.3E+4`` matches 23 000 +/- 500, and ``0.00001`` matches ``1e-5``.
+
+A grounded tool must return its numbers as Python ``int``/``float``. The runtime turns
+other types (numpy scalars, ``Decimal``) into strings when it serializes a result, and
+numbers inside strings are not sources, so they would not ground anything.
 
 It is a safety net, not a proof: a wrong number that equals another value of the results
 of the same kind still passes.
@@ -35,7 +41,9 @@ from typing import Any
 # issue or PR reference (#52), not glued to letters. Points and commas may be decimal
 # marks or thousands separators.
 _NUMBER = re.compile(r"(?<![\w.,/#-])-?\d+(?:[.,]\d+)*(?![\w])")
-_EXPONENT = re.compile(r"-?\d+(?:\.\d+)?[eE][-+]?\d+")
+# Scientific notation (1e-5, 2.3E+4, 1,5e-3) is one number, read before _NUMBER so that it
+# is not split into its mantissa and exponent.
+_EXPONENT = re.compile(r"(?<![\w.,/#-])(-?\d+)(?:[.,](\d+))?[eE]([-+]?\d+)(?![\w])")
 # Leading list markers ("1. ", "2) ") are not data.
 _ENUMERATION = re.compile(r"^(\s*)\d+[.)](?=\s)", re.MULTILINE)
 _PERCENT_AFTER = re.compile(r"\s?(?:%|por\s?cento\b|percent\b|per\s?cent\b)", re.IGNORECASE)
@@ -81,7 +89,18 @@ def numbers_in_text(text: str) -> list[str]:
 def mentions(text: str) -> list[Mention]:
     cleaned = _ENUMERATION.sub(r"\1", text)
     found: list[tuple[int, Mention]] = []
+    taken: list[tuple[int, int]] = []
+    for match in _EXPONENT.finditer(cleaned):
+        whole, frac, exponent = match.group(1), match.group(2) or "", int(match.group(3))
+        sign = -1.0 if whole.startswith("-") else 1.0
+        value = sign * float(f"{whole.lstrip('-')}.{frac or 0}") * 10.0 ** exponent
+        percent = bool(_PERCENT_AFTER.match(cleaned, match.end()))
+        found.append((match.start(), Mention(match.group(0), ((value, len(frac) - exponent),),
+                                             percent)))
+        taken.append(match.span())
     for match in _NUMBER.finditer(cleaned):
+        if any(start <= match.start() < end for start, end in taken):
+            continue
         token = match.group(0)
         percent = bool(_PERCENT_AFTER.match(cleaned, match.end()))
         found.append((match.start(), Mention(token, _readings(token), percent)))
@@ -104,7 +123,6 @@ def ungrounded_numbers(text: str, sources: Iterable[Any]) -> list[str]:
                 numbers = [value for value, _ in mention.readings]
                 values.extend(numbers)
                 percents.extend(numbers)
-            percents.extend(float(t) for t in _EXPONENT.findall(source))
         else:
             _walk(source, False, values, percents)
     missing: list[str] = []
