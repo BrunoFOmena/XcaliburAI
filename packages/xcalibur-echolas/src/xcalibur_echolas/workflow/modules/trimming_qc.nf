@@ -13,10 +13,10 @@ process FASTQC_RAW {
     cpus 2
 
     input:
-    tuple val(sample), path(reads)
+    tuple val(sample), val(mate), path(reads)
 
     output:
-    tuple val(sample), path("*.zip"), emit: zip
+    tuple val(sample), val(mate), path("*.zip"), emit: zip
     tuple val(sample), path("*.html"), emit: html
 
     script:
@@ -34,10 +34,10 @@ process FASTQC_PARSE {
     conda "conda-forge::unzip=6.0"
 
     input:
-    tuple val(sample), path(zipfile)
+    tuple val(sample), val(mate), path(zipfile)
 
     output:
-    tuple val(sample), stdout
+    tuple val(sample), val(mate), stdout
 
     script:
     """
@@ -273,10 +273,17 @@ workflow TRIMMING_QC {
     // FASTQC PRÉ
     ////////////////////////////////////////////////////
 
-    qc = FASTQC_RAW(reads.map { sample, mate, f -> tuple(sample, f) })
+    qc = FASTQC_RAW(reads)
 
+    // One quality per sample (issue #48). FastQC runs per file, so a pair yields two
+    // values, R1's and R2's; the LOWER one decides, since the trimming applies to both
+    // mates and the worse one (usually R2) is what needs it. A single-end sample has one
+    // file and keeps its own value. Grouping first makes the decision independent of
+    // which FastQC ends first (before, join kept whichever mate arrived first).
     qmetrics = FASTQC_PARSE(qc.zip)
-        .map { s, q -> tuple(s, q as double) }
+        .map { s, mate, q -> tuple(s, q.trim() as double) }
+        .groupTuple(by: 0)
+        .map { s, qs -> tuple(s, qs.min()) }
 
     ////////////////////////////////////////////////////
     // PE / SE (the mate comes with each file from main.nf)
@@ -312,7 +319,7 @@ workflow TRIMMING_QC {
 
     if (mode == "AUTO") {
 
-        pe = paired.join(qmetrics)
+        pe = paired.combine(qmetrics, by: 0)
 
         TRIM_PE_CONSERVATIVE(
             pe.filter { s,r1,r2,q -> q >= 30 }
@@ -333,7 +340,7 @@ workflow TRIMMING_QC {
         // AUTO MODE — SE
         ////////////////////////////////////////////////////
 
-        se = single.join(qmetrics)
+        se = single.combine(qmetrics, by: 0)
 
         TRIM_SE_BASIC(
             se.filter { s,r,q -> q >= 28 }

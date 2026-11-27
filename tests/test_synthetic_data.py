@@ -42,6 +42,12 @@ def test_layout_and_variants(tmp_path):
             assert header.startswith(f"@{sample}.1") and plus == "+"
             assert len(seq) == len(qual) == synth.READ_LENGTH
             assert set(qual) <= synth.PROFILES[sample].characters
+    # SA2's R2 is written with its own, lower, quality profile (#48).
+    firsts = {}
+    for mate in (1, 2):
+        with gzip.open(tmp_path / "raw_data" / f"SA2_R{mate}.fastq.gz", "rt") as fh:
+            firsts[mate] = [next(fh).strip() for _ in range(4)][3]
+    assert "+" not in firsts[1] and firsts[2].endswith("+" * 35)
     assert synth.read_truth(tmp_path / "truth.tsv") == variants
     # Every sample differs from every other, so PCA and the tree have signal.
     profiles = {s: {v for v in variants if s in v.samples} for s in synth.SAMPLES}
@@ -64,16 +70,19 @@ def test_sample_alleles_are_applied(tmp_path):
             shift[v.contig] += len(v.alt) - len(v.ref)
 
 
+def auto_path(layout: str, q: float) -> str:
+    """The AUTO thresholds of modules/trimming_qc.nf."""
+    if layout == "paired":
+        return "pe_conservative" if q >= 30 else "pe_intermediate" if q >= 25 else "pe_aggressive"
+    return "se_basic" if q >= 28 else "se_aggressive"
+
+
 def test_profiles_send_each_sample_down_its_trimming_path():
-    """The AUTO thresholds of modules/trimming_qc.nf, applied to each profile's mean."""
+    """The AUTO thresholds, applied to the quality AUTO decides on (lower mate of a pair)."""
     paths = []
     for sample, profile in synth.PROFILES.items():
-        q = profile.mean_quality(synth.READ_LENGTH)
-        if profile.layout == "paired":
-            expected = ("pe_conservative" if q >= 30 else
-                        "pe_intermediate" if q >= 25 else "pe_aggressive")
-        else:
-            expected = "se_basic" if q >= 28 else "se_aggressive"
+        q = profile.auto_quality(synth.READ_LENGTH)
+        expected = auto_path(profile.layout, q)
         assert profile.trimming == expected, (sample, q)
         paths.append(profile.trimming)
         # FastQC guesses Phred+64 when no character is below Q31.
@@ -82,10 +91,22 @@ def test_profiles_send_each_sample_down_its_trimming_path():
                                   "se_aggressive", "se_basic"]
 
 
+def test_one_pair_has_mates_that_only_the_lower_mate_rule_classifies_right():
+    """#48: a pair whose R1 and R2 fall on different paths, so taking either mate alone,
+    or their mean, would pick another path than the rule of the pipeline."""
+    profile = synth.PROFILES["SA2"]
+    r1, r2 = (m.mean_quality(synth.READ_LENGTH) for m in profile.mates)
+    assert r1 > 36 and 25 <= r2 < 30  # the issue's example: R1 ~Q36, R2 ~Q27
+    assert auto_path("paired", r1) == "pe_conservative"
+    assert auto_path("paired", (r1 + r2) / 2) == "pe_conservative"
+    assert auto_path("paired", min(r1, r2)) == profile.trimming == "pe_intermediate"
+
+
 def test_low_quality_tails_keep_reads_through_fastp():
     """fastp drops a read with more than 40% of bases under its quality cut, so the
     bad tail must stay under that, at the cut of the path the sample takes."""
     cuts = {"pe_intermediate": 25, "pe_aggressive": 30, "se_aggressive": 30}
     for sample, profile in synth.PROFILES.items():
         if profile.trimming in cuts:
-            assert profile.low_fraction(cuts[profile.trimming], synth.READ_LENGTH) < 0.4, sample
+            for mate in profile.mates:
+                assert mate.low_fraction(cuts[profile.trimming], synth.READ_LENGTH) < 0.4, sample
