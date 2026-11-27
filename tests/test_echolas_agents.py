@@ -255,6 +255,23 @@ def test_the_user_message_grounds_any_kind_of_number():
                               ["is 30% enough for 7 runs?", {"x": 1}]) == []
 
 
+def test_scientific_notation_is_one_number():
+    # #96: an exponent was split into mantissa and exponent ("2.3E+4" -> 2 and 4), or not
+    # read at all ("1e-5"), so an invented value passed and a right one was flagged.
+    assert numbers_in_text("p = 1e-5, q = 2.3E+4, r = -1,5e-3; hash 3e8a") == [
+        "1e-5", "2.3E+4", "-1,5e-3"]
+    data = {"p": 0.0000104, "q": 23180.0}
+    assert ungrounded_numbers("p = 1e-5 (0.00001); q = 2.3E+4", [data]) == []
+    assert ungrounded_numbers("p = 3e-5, q = 2.4E+4", [data]) == ["3e-5", "2.4E+4"]
+
+
+def test_the_user_message_grounds_scientific_notation():
+    # #96: exponents of the user's message only reached the percentages.
+    assert ungrounded_numbers("Com 1e-5 (0.00001) o filtro corta 10 sítios.",
+                              ["filtrar com p < 1e-5?", {"sites": 10}]) == []
+    assert ungrounded_numbers("1e-5% dos reads", ["é 1e-5%?"]) == []
+
+
 def test_percent_keys_are_found_at_any_depth():
     data = {"samples": [{"missing_percent": 12.5}], "pca": {"pct": [40.0]}}
     assert ungrounded_numbers("12.5% missing; PC1 40%.", [data]) == []
