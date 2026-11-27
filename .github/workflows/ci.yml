@@ -40,13 +40,17 @@ jobs:
       - run: pip install -e ".[dev]" -e packages/xcalibur-echolas
       - run: pytest
 
-  # Full ECHOLAS pipeline on synthetic data (tests/e2e, issue #11). Optional for PRs into
+  # Full ECHOLAS pipeline on synthetic data (tests/e2e, issue #11). Skipped for PRs into
   # homolog that only touch documentation; always runs for homolog -> main and on pushes.
+  # Required check on main (issue #49), not on homolog. Timeouts sized from the runs of
+  # 19-27 Nov 2026: test step 74-168 s with a warm cache, up to 208 s cold; job up to 8.4 min
+  # (a 320 s cache restore). The job limit leaves room for the test's own timeout to fire
+  # first, so the run is still uploaded.
   e2e:
     name: e2e
     needs: [lint, test]
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 25
     env:
       NXF_VER: "26.10.6"
       MICROMAMBA_VERSION: "2.0.5-0"
@@ -109,7 +113,7 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         env:
           # A cold cache builds every conda environment during the run.
-          XCALIBUR_E2E_TIMEOUT: ${{ steps.cache.outputs.cache-hit == 'true' && '900' || '1800' }}
+          XCALIBUR_E2E_TIMEOUT: ${{ steps.cache.outputs.cache-hit == 'true' && '600' || '900' }}
         run: |
           nextflow -version
           micromamba --version
