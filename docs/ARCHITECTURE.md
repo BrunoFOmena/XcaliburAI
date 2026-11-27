@@ -46,7 +46,7 @@ Provenance record  +  Interpretation agents ──▶ report
 | `llm/anthropic_provider.py` | Anthropic provider on the official SDK (`xcalibur-ai[anthropic]`): system prompt, tools, streaming, bounded retries, clear errors, server-side refusal fallback |
 | `config.py` | `xcalibur.yaml` (user or workspace): provider, model and the NAME of the key variable; never the key |
 | `provenance.py` | `RunRecord`: versions, params, command, status, the software the tasks used (`software`); one file per attempt, claimed atomically |
-| `execution/software.py` | `collect_software`: after a run, reads `work/*/*/.command.run` for each task's process and conda environment or container; requested conda packages come from `conda-meta`, an image's tool list from the file its `org.xcalibur.tool-versions` label names |
+| `execution/software.py` | `collect_software`: after a run, reads `work/*/*/.command.run` for each task's process and conda environment or container; requested conda packages come from `conda-meta`, an image's tool list from the file its `org.xcalibur.tool-versions` label names; at most 120 s in all, and no Docker call for a cancelled run |
 | `workspace.py` | Local on-disk layout (`data/`, `runs/`, `reports/`) |
 | `cli.py` | `version`, `domains`, `plan` (more with the agent layer) |
 

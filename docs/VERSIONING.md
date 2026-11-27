@@ -17,7 +17,7 @@ Para decidir se uma mudança é breaking, considere pública a superfície que o
 - comandos, flags e códigos de saída da CLI `xcalibur`;
 - o formato do `manifest.yaml` (`schema_version`) e o contrato `DomainPlugin`;
 - o grupo de entry points `xcalibur.domains`;
-- o formato do registro de proveniência: `run-<id>.json` na primeira tentativa e `run-<id>.attempt-<n>.json` nas seguintes (`--resume`), com o campo `attempt`; o registro é criado com `status: "running"` quando o run começa e regravado com o resultado no fim, já com o campo opcional `software` (ferramentas e versões que as tarefas usaram);
+- o formato do registro de proveniência: `run-<id>.json` na primeira tentativa e `run-<id>.attempt-<n>.json` nas seguintes (`--resume`), com o campo `attempt`; o registro é criado com `status: "running"` quando o run começa e regravado com o resultado no fim, já com o campo opcional `software` (ferramentas e versões que as tarefas usaram; num run cancelado, as imagens são listadas sem chamar o Docker, e a coleta toda tem um teto de 120 s, com o que ficou de fora registrado em `notes`. Só containers Docker e Podman são reconhecidos, não Singularity/Apptainer, e um caminho de ambiente conda com espaço só é lido quando o Nextflow o escreve entre aspas);
 - as interfaces `Agent`, `LLMProvider` e `WorkflowEngine`.
 
 Mudanças internas não listadas não exigem MAJOR.
