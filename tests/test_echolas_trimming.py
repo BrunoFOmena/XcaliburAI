@@ -1,4 +1,4 @@
-"""fastp trimming paths of AUTO (issue #81): trim, then filter; never drop for quality alone."""
+"""Trimming paths of AUTO: fastp trims, then filters (#81); Trimmomatic keeps both mates (#92)."""
 
 import re
 from pathlib import Path
@@ -41,6 +41,16 @@ def test_paths_differ_only_where_intended():
     lengths = {p: options(p)["length_required"] for p in FASTP}
     assert lengths == {"TRIM_PE_INTERMEDIATE": "50", "TRIM_PE_AGGRESSIVE": "50",
                        "TRIM_SE_BASIC": "36", "TRIM_SE_AGGRESSIVE": "50"}
+
+
+def test_conservative_path_keeps_both_mates_of_adapter_read_through():
+    # Without keepBothReads, Trimmomatic keeps only R1 of a pair that reads into the
+    # adapter, in the unpaired output the pipeline drops (issue #92).
+    text = MODULE.read_text(encoding="utf-8")
+    body = re.search(r"process TRIM_PE_CONSERVATIVE \{(.*?)\n\}", text, re.S).group(1)
+    clip = re.findall(r"ILLUMINACLIP:(\S+)", body)
+    assert clip == ["TruSeq3-PE.fa:2:30:10:2:True"]
+    assert 'path("*_paired.fastq.gz")' in body
 
 
 def test_auto_decides_on_the_lower_mate_of_each_pair():
