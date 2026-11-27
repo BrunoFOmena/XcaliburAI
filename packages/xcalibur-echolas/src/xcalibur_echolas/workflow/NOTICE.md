@@ -36,6 +36,9 @@ reach the alignment):
 - `modules/trimming_qc.nf` (#92): `TRIM_PE_CONSERVATIVE` sets `keepBothReads` in
   `ILLUMINACLIP` (`TruSeq3-PE.fa:2:30:10:2:True`). The original kept only R1 of a pair
   that reads into the adapter, in the unpaired output, so the pipeline lost the pair.
+- `modules/trimming_qc.nf` (#93): `TRIM_PE_CONSERVATIVE` trims at Q15 like the fastp
+  paths: `TRAILING:15 SLIDINGWINDOW:4:15 MINLEN:50`, after Franssen et al. 2020. The
+  original used `LEADING:20 TRAILING:20 SLIDINGWINDOW:4:20 MINLEN:36`.
 
 ---
 

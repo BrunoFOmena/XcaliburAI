@@ -53,6 +53,15 @@ def test_conservative_path_keeps_both_mates_of_adapter_read_through():
     assert 'path("*_paired.fastq.gz")' in body
 
 
+def test_conservative_path_trims_at_q15_like_the_fastp_paths():
+    # Q20 dropped whole samples of mediocre quality (#93); Franssen et al. 2020 use Q15.
+    text = MODULE.read_text(encoding="utf-8")
+    body = re.search(r"process TRIM_PE_CONSERVATIVE \{(.*?)\n\}", text, re.S).group(1)
+    steps = re.findall(r"\b([A-Z]+):(\S+)", body[body.index("trimmomatic PE"):])
+    assert steps == [("ILLUMINACLIP", "TruSeq3-PE.fa:2:30:10:2:True"), ("TRAILING", "15"),
+                     ("SLIDINGWINDOW", "4:15"), ("MINLEN", "50")]
+
+
 def test_auto_decides_on_the_lower_mate_of_each_pair():
     """#48: qualities are grouped per sample before the decision (join kept whichever mate
     arrived first), and the lower one decides."""
