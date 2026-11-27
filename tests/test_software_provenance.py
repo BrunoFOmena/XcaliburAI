@@ -2,9 +2,10 @@
 
 import json
 import stat
+import time
 from pathlib import Path
 
-from xcalibur.execution import software
+from xcalibur.execution import nextflow, software
 from xcalibur.execution.base import RunSpec
 from xcalibur.execution.nextflow import NextflowEngine
 from xcalibur.execution.software import VERSIONS_LABEL, collect_software
@@ -156,6 +157,75 @@ def test_task_limit_is_reported(tmp_path, monkeypatch):
     assert list(result["processes"]) == ["A"] and "only the first 1 of 2" in result["notes"][0]
 
 
+def logging_docker(tmp_path: Path, delay: float = 0) -> tuple[str, Path]:
+    """A docker that logs its calls (and may hang) before answering like fake_docker."""
+    real = fake_docker(tmp_path)
+    calls = tmp_path / "calls.log"
+    script = tmp_path / "bin" / "docker-logged"
+    script.write_text(f'#!/bin/sh\necho "$@" >> {calls}\nsleep {delay}\nexec {real} "$@"\n')
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return str(script), calls
+
+
+def test_cancelled_runs_do_not_call_docker(tmp_path):
+    # #97: cancelling must not wait for `docker image inspect` and `docker run`.
+    task(tmp_path / "work", "aa1111", "A", docker_line(IMAGE))
+    docker, calls = logging_docker(tmp_path)
+    result = collect_software(tmp_path, docker=docker, describe_images=False)
+    assert not calls.exists()
+    assert result["containers"] == [{"image": IMAGE, "engine": "docker"}]
+    assert result["processes"] == {"A": {"container": IMAGE}}
+    assert "run cancelled" in result["notes"][0]
+
+
+def test_the_whole_collection_has_a_time_limit(tmp_path):
+    task(tmp_path / "work", "aa1111", "A", docker_line(IMAGE))
+    task(tmp_path / "work", "bb2222", "B", docker_line("ghcr.io/x/other:2"))
+    docker, calls = logging_docker(tmp_path, delay=30)
+    started = time.monotonic()
+    result = collect_software(tmp_path, docker=docker, timeout=1)
+    assert time.monotonic() - started < 10  # one call cut at the limit, the next skipped
+    assert len(calls.read_text().splitlines()) == 1
+    assert any("could not inspect" in n for n in result["notes"])
+    assert any("time limit reached: image" in n for n in result["notes"])
+    assert len(result["containers"]) == 2
+
+
+def test_task_directories_stop_at_the_time_limit(tmp_path):
+    task(tmp_path / "work", "aa1111", "A", "true")
+    result = collect_software(tmp_path, timeout=0)
+    assert result is None or "time limit reached" in result["notes"][0]
+
+
+def test_option_like_names_never_reach_docker(tmp_path):
+    task(tmp_path / "work", "aa1111", "A", docker_line("--privileged"))
+    docker, calls = logging_docker(tmp_path)
+    result = collect_software(tmp_path, docker=docker)
+    assert not calls.exists() and "starts with '-'" in result["notes"][0]
+    relative = fake_docker(tmp_path, labels={VERSIONS_LABEL: "-v"})
+    task(tmp_path / "other" / "work", "aa1111", "A", docker_line(IMAGE))
+    result = collect_software(tmp_path / "other", docker=relative)
+    assert "not an absolute path" in result["notes"][0]
+    assert "tools" not in result["containers"][0]
+
+
+def test_quoted_conda_paths_with_spaces(tmp_path):
+    env = conda_env(tmp_path / "my envs", "env", {"bwa": "0.7.17"})
+    task(tmp_path / "work", "aa1111", "A", f"    micromamba activate '{env}'")
+    task(tmp_path / "work", "bb2222", "B", f'    source activate "{env}"')
+    assert collect_software(tmp_path)["processes"] == {"A": {"conda": {"bwa": "0.7.17"}},
+                                                       "B": {"conda": {"bwa": "0.7.17"}}}
+
+
+def test_engine_skips_docker_for_cancelled_runs(tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr("xcalibur.execution.nextflow.collect_software",
+                        lambda run_dir, **options: seen.append(options))
+    nextflow._software(tmp_path, cancelled=True)
+    nextflow._software(tmp_path)
+    assert seen == [{"describe_images": False}, {"describe_images": True}]
+
+
 # -- written by the engine ----------------------------------------------------------------
 
 FAKE_NEXTFLOW = """#!/bin/sh
@@ -194,7 +264,7 @@ def test_engine_records_the_software_of_successful_and_failed_runs(tmp_path, mon
 
 
 def test_engine_never_fails_because_of_the_collection(tmp_path, monkeypatch):
-    def broken(run_dir):
+    def broken(run_dir, **options):
         raise RuntimeError("boom")
 
     monkeypatch.setattr("xcalibur.execution.nextflow.collect_software", broken)

@@ -128,7 +128,7 @@ class NextflowEngine:
         record.status = status
         record.returncode = returncode
         record.finished_at = datetime.now(UTC)
-        record.software = _software(run_dir)
+        record.software = _software(run_dir, cancelled=status == "cancelled")
         record_path = record.write(run_dir)
         return RunResult(
             run_id=spec.run_id,
@@ -198,10 +198,13 @@ class NextflowEngine:
         return status, returncode
 
 
-def _software(run_dir: Path) -> dict | None:
-    """What the tasks used, for the record; never lets a failure here fail the run."""
+def _software(run_dir: Path, cancelled: bool = False) -> dict | None:
+    """What the tasks used, for the record; never lets a failure here fail the run.
+
+    A cancelled run does not call Docker, so the cancellation returns quickly (#97).
+    """
     try:
-        return collect_software(run_dir)
+        return collect_software(run_dir, describe_images=not cancelled)
     except Exception as exc:  # noqa: BLE001 - provenance is best effort, the run is done
         return {"notes": [f"software could not be collected: {type(exc).__name__}: {exc}"]}
 
